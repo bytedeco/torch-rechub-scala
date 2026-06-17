@@ -21,15 +21,15 @@ import scala.collection.mutable
  * Benchmark result case class.
  */
 case class DataFrameBenchmarkResult(
-  name: String,
-  category: String,
-  passed: Boolean,
-  rowsProcessed: Long,
-  latencyMs: Double,
-  throughputRowsPerSec: Double,
-  memoryMb: Double,
-  error: Option[String] = None
-)
+                                     name: String,
+                                     category: String,
+                                     passed: Boolean,
+                                     rowsProcessed: Long,
+                                     latencyMs: Double,
+                                     throughputRowsPerSec: Double,
+                                     memoryMb: Double,
+                                     error: Option[String] = None
+                                   )
 
 /**
  * Comprehensive DataFrame pipeline benchmark suite.
@@ -371,10 +371,10 @@ object DataFrameBenchmark {
         memoryMb = estimateMemory(df)
       )
     }
-//    catch {
-//      case e: Exception =>
-//        DataFrameBenchmarkResult(name, category, false, 0, 0, 0, 0, Some(e.getMessage))
-//    }
+    //    catch {
+    //      case e: Exception =>
+    //        DataFrameBenchmarkResult(name, category, false, 0, 0, 0, 0, Some(e.getMessage))
+    //    }
   }
 
   def runBatchToDataFrameBenchmark(): DataFrameBenchmarkResult = {
@@ -546,10 +546,10 @@ object DataFrameBenchmark {
         memoryMb = estimateMemory(rawDF) + estimateMemory(processedDF)
       )
     }
-//    catch {
-//      case e: Exception =>
-//        DataFrameBenchmarkResult(name, category, false, 0, 0, 0, 0, Some(e.getMessage))
-//    }
+    //    catch {
+    //      case e: Exception =>
+    //        DataFrameBenchmarkResult(name, category, false, 0, 0, 0, 0, Some(e.getMessage))
+    //    }
   }
 
   // ========================================================================
@@ -557,11 +557,11 @@ object DataFrameBenchmark {
   // ========================================================================
 
   private def benchmarkTransformer(
-    name: String,
-    category: String,
-    df: DataFrame,
-    transformer: FeatureTransformer
-  ): DataFrameBenchmarkResult = {
+                                    name: String,
+                                    category: String,
+                                    df: DataFrame,
+                                    transformer: FeatureTransformer
+                                  ): DataFrameBenchmarkResult = {
     try {
       val numRows = df.numRows
       val startTime = System.nanoTime()
@@ -590,7 +590,7 @@ object DataFrameBenchmark {
     var totalBytes = 0L
     for (colName <- df.columns) {
       val col = df.col(colName)
-      totalBytes += col.length * 8  // Approximate 8 bytes per element
+      totalBytes += col.length * 8 // Approximate 8 bytes per element
     }
     totalBytes / (1024.0 * 1024.0)
   }

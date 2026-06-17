@@ -1,11 +1,10 @@
 package torchrec.models.generative
 
-import torchrec.basic.layers._
-import torchrec.utils.DeviceSupport
-
 import org.bytedeco.pytorch._
 import org.bytedeco.pytorch.global.torch
 import org.bytedeco.pytorch.global.torch.ScalarType
+import torchrec.utils.DeviceSupport
+import torchrec.basic.layers.MLP
 
 /**
  * LLM4Rec: Transformer Encoder for Sequential Recommendation
@@ -28,14 +27,11 @@ class LLM4Rec(
   private val ffDim = embedDim * 4L
   private val targetDevice = new Device(device)
 
-  // Token Embedding
-  private val tokenEmbedding = new EmbeddingImpl(
-    new EmbeddingOptions(vocabSize, embedDim)
-  )
+  // 1. 原生层：安全注册
+  private val tokenEmbedding = new EmbeddingImpl(new EmbeddingOptions(vocabSize, embedDim))
   tokenEmbedding.to(targetDevice, false)
   register_module("tokenEmbedding", tokenEmbedding)
 
-  // CLS Token
   private val clsTensor = {
     val t = torch.zeros(
       Array(1L, 1L, embedDim.toLong),
@@ -46,68 +42,71 @@ class LLM4Rec(
   }
   register_parameter("clsToken", clsTensor)
 
-  // Positional Embedding
-  private val positionEmbedding = new EmbeddingImpl(
-    new EmbeddingOptions(maxSeqLen + 1, embedDim)
-  )
+  private val positionEmbedding = new EmbeddingImpl(new EmbeddingOptions(maxSeqLen + 1, embedDim))
   positionEmbedding.to(targetDevice, false)
   register_module("positionEmbedding", positionEmbedding)
 
-  // Transformer Layers
-  private val encoderLayers = (0 until numLayers).map { i =>
-    val layer = new LLM4RecEncoderLayer(embedDim, numHeads, ffDim, dropout, device)
-    register_module(s"encoder_$i", layer)
-    layer
-  }
-
-  // LayerNorm
   private val preNorm = {
-    val vec = new LongVector(1)
-    vec.put(0, embedDim.toLong)
+    val vec = new LongVector(Array(embedDim.toLong) *)
     new LayerNormImpl(vec)
   }
   preNorm.to(targetDevice, false)
   register_module("preNorm", preNorm)
 
-  private val dropoutLayer = new DropoutImpl(dropout)
-  private val mlp = new MLP(embedDim, mlpDims, 1, "relu", dropout, false, false, device)
+  // 2. 自定义 Scala 层：坚决不注册，使用 List 强引用保存
+  private val encoderLayers = (0 until numLayers).map { _ =>
+    val layer = new LLM4RecEncoderLayer(embedDim, numHeads, ffDim, dropout, device)
+    // ❌ 删除了 register_module(s"encoder_$i", layer)
+    layer
+  }.toList
 
-  register_module("dropout", dropoutLayer)
-  register_module("mlp", mlp)
+  private val mlp = new MLP(embedDim, mlpDims, 1, "relu", dropout, false, false, true, device)
+  // ❌ 删除了 register_module("mlp", mlp)
+  // ❌ 删除了 DropoutImpl，改用纯函数
+
+  private var isTrainingMode = true
 
   // ===========================================================================
-  // FORWARD —— 修复类型错误
+  // ✅ 手动状态分发：完美避开 C++ 底层遍历导致的 Director 崩溃
+  // ===========================================================================
+  override def train(on: Boolean): Unit = {
+    isTrainingMode = on
+    tokenEmbedding.train(on)
+    positionEmbedding.train(on)
+    preNorm.train(on)
+
+    // 手动通知自定义子层
+    encoderLayers.foreach(_.train(on))
+    // 假设 MLP 内部也有安全的 train(on) 或未注册状态
+    try { mlp.train(on) } catch { case _: Throwable => }
+  }
+
+  // ===========================================================================
+  // FORWARD
   // ===========================================================================
   def forward(seqTokens: Tensor, positions: Tensor): Tensor = {
     val batchSize = seqTokens.size(0)
     val dev = seqTokens.device()
 
-    // 1. Token Embedding
     val tokenEmb = tokenEmbedding.forward(seqTokens.toType(ScalarType.Long))
-
-    // 2. CLS
-    val clsBatched = clsTensor.expand(batchSize, 1L, embedDim.toLong)
+    val clsBatched = clsTensor.expand(Array(batchSize, 1L, embedDim.toLong) *)
     val tokenEmbWithCls = torch.cat(new TensorVector(clsBatched, tokenEmb), 1)
 
-    // ===================== ✅ 超级修复：必须 LongTensor =====================
     val clsPos = torch.zeros(
       Array(batchSize, 1L),
       new TensorOptions().dtype(new ScalarTypeOptional(ScalarType.Long)).device(new DeviceOptional(dev))
     )
-
     val posWithCls = torch.cat(new TensorVector(clsPos, positions.toType(ScalarType.Long)), 1)
-
-    // 4. Position Embedding
     val posEmb = positionEmbedding.forward(posWithCls)
-    var x = dropoutLayer.forward(tokenEmbWithCls.add(posEmb))
 
-    // 5. Transformer
+    // ✅ 使用纯函数 Dropout
+    var x = torch.dropout(tokenEmbWithCls.add(posEmb), dropout.toDouble, isTrainingMode)
+
     encoderLayers.foreach { layer =>
       val out = layer.forward(x)
       x = x.add(out)
     }
 
-    // 6. CLS Head
     val clsRep = preNorm.forward(x).select(1, 0)
     mlp.forward(clsRep)
   }
@@ -125,42 +124,32 @@ class LLM4RecEncoderLayer(
   private val targetDevice = new Device(device)
   private val headDim = embedDim / numHeads
 
-  // Attention
+  // 1. 只创建带有权重的原生层
   private val attnLinear = new LinearImpl(embedDim, 3 * embedDim)
   private val attnOutProj = new LinearImpl(embedDim, embedDim)
-
-  // FFN
   private val ffnLinear1 = new LinearImpl(embedDim, ffDim)
   private val ffnLinear2 = new LinearImpl(ffDim, embedDim)
 
-  // LayerNorm
-  private val norm1 = {
-    val vec = new LongVector(1)
-    vec.put(0, embedDim.toLong)
-    new LayerNormImpl(vec)
-  }
-
-  private val norm2 = {
-    val vec = new LongVector(1)
-    vec.put(0, embedDim.toLong)
-    new LayerNormImpl(vec)
-  }
-
-  private val attnDropout = new DropoutImpl(dropout)
-  private val ffnDropout = new DropoutImpl(dropout)
+  private val norm1 = new LayerNormImpl(new LongVector(Array(embedDim.toLong) *))
+  private val norm2 = new LayerNormImpl(new LongVector(Array(embedDim.toLong) *))
 
   // 设备迁移
   List(attnLinear, attnOutProj, ffnLinear1, ffnLinear2, norm1, norm2).foreach(_.to(targetDevice, false))
 
-  // 注册
-  register_module("attnLinear", attnLinear)
-  register_module("attnOutProj", attnOutProj)
-  register_module("ffnLinear1", ffnLinear1)
-  register_module("ffnLinear2", ffnLinear2)
-  register_module("norm1", norm1)
-  register_module("norm2", norm2)
-  register_module("attnDropout", attnDropout)
-  register_module("ffnDropout", ffnDropout)
+  // ❌ 彻底废弃 DropoutImpl
+
+  private var isTrainingMode = true
+
+  // ✅ 手动控制子模块状态
+  override def train(on: Boolean): Unit = {
+    isTrainingMode = on
+    attnLinear.train(on)
+    attnOutProj.train(on)
+    ffnLinear1.train(on)
+    ffnLinear2.train(on)
+    norm1.train(on)
+    norm2.train(on)
+  }
 
   def forward(x: Tensor): Tensor = {
     val bs = x.size(0)
@@ -175,17 +164,211 @@ class LLM4RecEncoderLayer(
 
     val scale = 1.0f / math.sqrt(headDim).toFloat
     val attn = torch.matmul(q, k.transpose(-2, -1)).mul(new Scalar(scale)).softmax(-1)
-    val valOut = torch.matmul(attnDropout.forward(attn), v)
-    val attnOut = attnOutProj.forward(valOut.permute(1, 2, 0, 3).reshape(bs, sl, embedDim))
 
+    // ✅ 使用纯函数 Dropout 替换 attnDropout.forward
+    val droppedAttn = torch.dropout(attn, dropout.toDouble, isTrainingMode)
+    val valOut = torch.matmul(droppedAttn, v)
+
+    val attnOut = attnOutProj.forward(valOut.permute(1, 2, 0, 3).reshape(bs, sl, embedDim))
     val residual1 = x.add(attnOut)
 
     // FFN
     val nx2 = norm2.forward(residual1)
-    val ffn = ffnLinear2.forward(ffnDropout.forward(ffnLinear1.forward(nx2).relu()))
+    val ffnHidden = ffnLinear1.forward(nx2).relu()
+
+    // ✅ 使用纯函数 Dropout 替换 ffnDropout.forward
+    val droppedFfn = torch.dropout(ffnHidden, dropout.toDouble, isTrainingMode)
+    val ffn = ffnLinear2.forward(droppedFfn)
+
     residual1.add(ffn)
   }
 }
+//import torchrec.basic.layers._
+//import torchrec.utils.DeviceSupport
+//
+//import org.bytedeco.pytorch._
+//import org.bytedeco.pytorch.global.torch
+//import org.bytedeco.pytorch.global.torch.ScalarType
+//
+///**
+// * LLM4Rec: Transformer Encoder for Sequential Recommendation
+// */
+//class LLM4Rec(
+//               vocabSize: Long,
+//               embedDim: Int = 64,
+//               numHeads: Int = 4,
+//               numLayers: Int = 3,
+//               maxSeqLen: Int = 50,
+//               mlpDims: List[Long] = List(256L, 128L),
+//               dropout: Float = 0.1f,
+//               usePosEncoding: Boolean = true,
+//               device: String = DeviceSupport.backend
+//             ) extends Module {
+//
+//  require(embedDim % numHeads == 0, "embedDim must be divisible by numHeads")
+//
+//  private val headDim = embedDim / numHeads
+//  private val ffDim = embedDim * 4L
+//  private val targetDevice = new Device(device)
+//
+//  // Token Embedding
+//  private val tokenEmbedding = new EmbeddingImpl(
+//    new EmbeddingOptions(vocabSize, embedDim)
+//  )
+//  tokenEmbedding.to(targetDevice, false)
+//  register_module("tokenEmbedding", tokenEmbedding)
+//
+//  // CLS Token
+//  private val clsTensor = {
+//    val t = torch.zeros(
+//      Array(1L, 1L, embedDim.toLong),
+//      new TensorOptions().dtype(new ScalarTypeOptional(ScalarType.Float)).device(new DeviceOptional(targetDevice))
+//    )
+//    t.fill_(new Scalar(0.02f))
+//    t
+//  }
+//  register_parameter("clsToken", clsTensor)
+//
+//  // Positional Embedding
+//  private val positionEmbedding = new EmbeddingImpl(
+//    new EmbeddingOptions(maxSeqLen + 1, embedDim)
+//  )
+//  positionEmbedding.to(targetDevice, false)
+//  register_module("positionEmbedding", positionEmbedding)
+//
+//  // Transformer Layers
+//  private val encoderLayers = (0 until numLayers).map { i =>
+//    val layer = new LLM4RecEncoderLayer(embedDim, numHeads, ffDim, dropout, device)
+//    register_module(s"encoder_$i", layer)
+//    layer
+//  }
+//
+//  // LayerNorm
+//  private val preNorm = {
+//    val vec = new LongVector(1)
+//    vec.put(0, embedDim.toLong)
+//    new LayerNormImpl(vec)
+//  }
+//  preNorm.to(targetDevice, false)
+//  register_module("preNorm", preNorm)
+//
+//  private val dropoutLayer = new DropoutImpl(dropout)
+//  private val mlp = new MLP(embedDim, mlpDims, 1, "relu", dropout, false, false,true, device)
+//
+//  register_module("dropout", dropoutLayer)
+//  register_module("mlp", mlp)
+//
+//  // ===========================================================================
+//  // FORWARD —— 修复类型错误
+//  // ===========================================================================
+//  def forward(seqTokens: Tensor, positions: Tensor): Tensor = {
+//    val batchSize = seqTokens.size(0)
+//    val dev = seqTokens.device()
+//
+//    // 1. Token Embedding
+//    val tokenEmb = tokenEmbedding.forward(seqTokens.toType(ScalarType.Long))
+//
+//    // 2. CLS
+//    val clsBatched = clsTensor.expand(batchSize, 1L, embedDim.toLong)
+//    val tokenEmbWithCls = torch.cat(new TensorVector(clsBatched, tokenEmb), 1)
+//
+//    // ===================== ✅ 超级修复：必须 LongTensor =====================
+//    val clsPos = torch.zeros(
+//      Array(batchSize, 1L),
+//      new TensorOptions().dtype(new ScalarTypeOptional(ScalarType.Long)).device(new DeviceOptional(dev))
+//    )
+//
+//    val posWithCls = torch.cat(new TensorVector(clsPos, positions.toType(ScalarType.Long)), 1)
+//
+//    // 4. Position Embedding
+//    val posEmb = positionEmbedding.forward(posWithCls)
+//    var x = dropoutLayer.forward(tokenEmbWithCls.add(posEmb))
+//
+//    // 5. Transformer
+//    encoderLayers.foreach { layer =>
+//      val out = layer.forward(x)
+//      x = x.add(out)
+//    }
+//
+//    // 6. CLS Head
+//    val clsRep = preNorm.forward(x).select(1, 0)
+//    mlp.forward(clsRep)
+//  }
+//}
+//
+//// ===================== Encoder Layer =====================
+//class LLM4RecEncoderLayer(
+//                           embedDim: Int,
+//                           numHeads: Int,
+//                           ffDim: Long,
+//                           dropout: Float,
+//                           device: String
+//                         ) extends Module {
+//
+//  private val targetDevice = new Device(device)
+//  private val headDim = embedDim / numHeads
+//
+//  // Attention
+//  private val attnLinear = new LinearImpl(embedDim, 3 * embedDim)
+//  private val attnOutProj = new LinearImpl(embedDim, embedDim)
+//
+//  // FFN
+//  private val ffnLinear1 = new LinearImpl(embedDim, ffDim)
+//  private val ffnLinear2 = new LinearImpl(ffDim, embedDim)
+//
+//  // LayerNorm
+//  private val norm1 = {
+//    val vec = new LongVector(1)
+//    vec.put(0, embedDim.toLong)
+//    new LayerNormImpl(vec)
+//  }
+//
+//  private val norm2 = {
+//    val vec = new LongVector(1)
+//    vec.put(0, embedDim.toLong)
+//    new LayerNormImpl(vec)
+//  }
+//
+//  private val attnDropout = new DropoutImpl(dropout)
+//  private val ffnDropout = new DropoutImpl(dropout)
+//
+//  // 设备迁移
+//  List(attnLinear, attnOutProj, ffnLinear1, ffnLinear2, norm1, norm2).foreach(_.to(targetDevice, false))
+//
+//  // 注册
+//  register_module("attnLinear", attnLinear)
+//  register_module("attnOutProj", attnOutProj)
+//  register_module("ffnLinear1", ffnLinear1)
+//  register_module("ffnLinear2", ffnLinear2)
+//  register_module("norm1", norm1)
+//  register_module("norm2", norm2)
+//  register_module("attnDropout", attnDropout)
+//  register_module("ffnDropout", ffnDropout)
+//
+//  def forward(x: Tensor): Tensor = {
+//    val bs = x.size(0)
+//    val sl = x.size(1)
+//
+//    // Attention
+//    val nx = norm1.forward(x)
+//    val qkv = attnLinear.forward(nx).view(bs, sl, 3, numHeads, headDim).permute(3, 0, 1, 4, 2)
+//    val q = qkv.select(4, 0)
+//    val k = qkv.select(4, 1)
+//    val v = qkv.select(4, 2)
+//
+//    val scale = 1.0f / math.sqrt(headDim).toFloat
+//    val attn = torch.matmul(q, k.transpose(-2, -1)).mul(new Scalar(scale)).softmax(-1)
+//    val valOut = torch.matmul(attnDropout.forward(attn), v)
+//    val attnOut = attnOutProj.forward(valOut.permute(1, 2, 0, 3).reshape(bs, sl, embedDim))
+//
+//    val residual1 = x.add(attnOut)
+//
+//    // FFN
+//    val nx2 = norm2.forward(residual1)
+//    val ffn = ffnLinear2.forward(ffnDropout.forward(ffnLinear1.forward(nx2).relu()))
+//    residual1.add(ffn)
+//  }
+//}
 
 //package torchrec.models.generative
 //

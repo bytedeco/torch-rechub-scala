@@ -72,8 +72,8 @@ object ModelBenchmark {
   }
 
   def printModelComparison(
-    comparison: Map[String, Map[String, Any]]
-  ): Unit = {
+                            comparison: Map[String, Map[String, Any]]
+                          ): Unit = {
     println("\n" + "=" * 80)
     println("Model Comparison")
     println("=" * 80)

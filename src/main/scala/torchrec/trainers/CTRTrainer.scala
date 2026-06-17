@@ -23,7 +23,7 @@ import torchrec.models.ranking.ETA
 import torchrec.models.ranking.MEMBA
 import torchrec.models.ranking.XGBoostModel
 import torchrec.models.ranking.LiquidNetWork
-import torchrec.models.generative.LLM4Rec
+import torchrec.models.generative.{LLM4Rec, HLLM}
 import torchrec.models.matching.MAMBA
 import torchrec.basic.losses.{BCELoss, BCEWithLogitsLoss}
 
@@ -213,6 +213,48 @@ class CTRTrainer(
                  totalLoss += loss.itemSafe().toFloat; numBatches += 1
                }
 
+//             case hllm: HLLM =>
+//               val tokensOpt = batch.tokens
+//               val timeDiffsOpt = batch.timeDiffs
+//               if (tokensOpt.nonEmpty) {
+//                 val tokens = tokensOpt.get
+//                 val timeDiffs = if (timeDiffsOpt.nonEmpty) Some(timeDiffsOpt.get) else None
+//                 val pred = hllm.forward(tokens, timeDiffs)
+//                 val batchSize = pred.size(0).toInt
+//                 val target2D = labels.view(batchSize, 1).toType(ScalarType.Float)
+//                 val loss = bceLoss.apply(pred, target2D)
+//                 loss.backward(); optimizer.step()
+//                 totalLoss += loss.itemSafe().toFloat; numBatches += 1
+//               }
+
+             case hllm: HLLM =>
+               val tokensOpt = batch.tokens
+               val timeDiffsOpt = batch.timeDiffs
+               // 🔥 确保我们有目标 Item 作为评估对象
+               if (tokensOpt.nonEmpty && features.nonEmpty) {
+                 val tokens = tokensOpt.get
+                 val timeDiffs = if (timeDiffsOpt.nonEmpty) Some(timeDiffsOpt.get) else None
+
+                 // 1. 获取全序列预测 [batchSize, seqLen, vocabSize]
+                 val allLogits = hllm.forward(tokens, timeDiffs)
+                 val batchSize = allLogits.size(0).toInt
+                 val seqLen = allLogits.size(1).toInt
+
+                 // 2. 截取最后一步的时间步 [batchSize, vocabSize]
+                 val lastStepLogits = allLogits.select(1, seqLen - 1)
+
+                 // 3. 提取目标 Item (通常在 sparseFeatures 中)
+                 val targetItem = features.values.head
+                 val targetItem2D = targetItem.view(batchSize, 1).toType(ScalarType.Long)
+
+                 // 4. 使用 gather 提取该 Target Item 的单一 Logit -> [batchSize, 1]
+                 val pred = lastStepLogits.gather(1, targetItem2D)
+
+                 val target2D = labels.view(batchSize, 1).toType(ScalarType.Float)
+                 val loss = bceLoss.apply(pred, target2D)
+                 loss.backward(); optimizer.step()
+                 totalLoss += loss.itemSafe().toFloat; numBatches += 1
+               }
             case _ =>
             // Skip unknown model types
           }
@@ -400,7 +442,34 @@ class CTRTrainer(
               labelList.appendAll(labelHost.toFloatArray)
               predHost.close(); labelHost.close()
             }
+          case hllm: HLLM =>
+            if (seqFeats.nonEmpty && features.nonEmpty) {
+              val tokensOpt = batch.tokens
+              val timeDiffsOpt = batch.timeDiffs
+              if (tokensOpt.nonEmpty) {
+                val tokens = tokensOpt.get
+                val timeDiffs = if (timeDiffsOpt.nonEmpty) Some(timeDiffsOpt.get) else None
 
+                // 1. 获取全序列预测
+                val allLogits = hllm.forward(tokens, timeDiffs)
+                val batchSize = allLogits.size(0).toInt
+                val seqLen = allLogits.size(1).toInt
+
+                // 2. 截取最后一步并查表 Target Item
+                val lastStepLogits = allLogits.select(1, seqLen - 1)
+                val targetItem = features.values.head
+                val targetItem2D = targetItem.view(batchSize, 1).toType(ScalarType.Long)
+
+                // 3. 获取 Target Logit 并通过 Sigmoid 转为概率
+                val pred = lastStepLogits.gather(1, targetItem2D).sigmoid()
+
+                val predHost = pred.squeeze().to(ScalarType.Float).contiguous().cpu()
+                val labelHost = label.squeeze().to(ScalarType.Float).contiguous().cpu()
+                predList.appendAll(predHost.toFloatArray)
+                labelList.appendAll(labelHost.toFloatArray)
+                predHost.close(); labelHost.close()
+              }
+            }
           case _ =>
             // Unknown model type — skip evaluation
         }

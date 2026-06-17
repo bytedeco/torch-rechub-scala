@@ -28,7 +28,7 @@ object CensusExample {
     // Configuration
     val numSamples = 2000
     val numFeatures = 30
-    val taskNames = List("cvr", "ctr")  // cvr = income, ctr = marital status
+    val taskNames = List("cvr", "ctr") // cvr = income, ctr = marital status
     val vocabSize = 100
     val embedDim = 8
     val batchSize = 256
@@ -89,22 +89,33 @@ object CensusExample {
     val taskTypes = taskNames.map(_ => "classification")
     println(s"  Task types: ${taskTypes.mkString(", ")}")
 
+    // Shared MLP params
+    val sharedMlpParams = Map[String, Any](
+      "dims" -> List(128L, 64L),
+      "activation" -> "relu",
+      "dropout" -> 0.2f
+    )
+    val towerParams = Map[String, Any](
+      "dims" -> List(64L),
+      "activation" -> "relu",
+      "dropout" -> 0.2f
+    )
+    val towerParamsList = List(towerParams, towerParams)
+
     // 4. Create model based on modelName
     println(s"\n[4] Creating model: $modelName...")
     val model: Module = modelName match {
       case "sharedbottom" | "shared_bottom" =>
         new SharedBottom(
           features = features,
-          taskNames = taskNames,
-          embedDim = embedDim,
-          sharedDims = List(128L, 64L),
-          towerDims = List(32L),
-          dropout = 0.2f,
+          taskTypes = taskTypes,
+          bottomParams = sharedMlpParams,
+          towerParamsList = towerParamsList,
           device = device
         )
 
       case "esmm" =>
-        new ESMM(
+        ESMM(
           features = features,
           taskNames = taskNames,
           embedDim = embedDim,
@@ -116,36 +127,53 @@ object CensusExample {
       case "mmoe" =>
         new MMOE(
           features = features,
-          taskNames = taskNames,
           taskTypes = taskTypes,
-          embedDim = embedDim,
-          numExperts = 4,
-          expertDims = List(64L),
-          towerDims = List(32L),
-          dropout = 0.2f,
+          nExpert = 4,
+          expertParams = sharedMlpParams,
+          towerParamsList = towerParamsList,
           device = device
         )
 
       case "ple" =>
         new PLE(
           features = features,
-          taskNames = taskNames,
-          embedDim = embedDim,
-          numSharedExperts = 2,
-          numTaskExperts = 2,
-          numLayers = 3,
-          expertDims = List(64L),
-          towerDims = List(32L),
-          dropout = 0.2f,
+          taskTypes = taskTypes,
+          nLevel = 3,
+          nExpertSpecific = 2,
+          nExpertShared = 2,
+          expertParams = sharedMlpParams,
+          towerParamsList = towerParamsList,
           device = device
         )
 
       case "aitm" =>
         new AITM(
           features = features,
+          nTask = taskNames.size,
+          bottomParams = sharedMlpParams,
+          towerParamsList = towerParamsList,
+          device = device
+        )
+
+      case "omoe" =>
+        new OMoE(
+          features = features,
           taskNames = taskNames,
           embedDim = embedDim,
-          hiddenDim = 64,
+          numExperts = 4,
+          expertDims = List(128L),
+          towerDims = List(64L),
+          dropout = 0.2f,
+          device = device
+        )
+
+      case "singletask" | "single_task" =>
+        new SingleTaskModel(
+          features = features,
+          taskNames = taskNames,
+          embedDim = embedDim,
+          bottomDims = List(128L),
+          towerDims = List(64L),
           dropout = 0.2f,
           device = device
         )
@@ -154,13 +182,10 @@ object CensusExample {
         println(s"  Warning: Unknown model '$modelName', defaulting to MMOE")
         new MMOE(
           features = features,
-          taskNames = taskNames,
           taskTypes = taskTypes,
-          embedDim = embedDim,
-          numExperts = 4,
-          expertDims = List(64L),
-          towerDims = List(32L),
-          dropout = 0.2f,
+          nExpert = 4,
+          expertParams = sharedMlpParams,
+          towerParamsList = towerParamsList,
           device = device
         )
     }
@@ -180,7 +205,7 @@ object CensusExample {
       device = device,
       numEpochs = numEpochs,
       earlyStopPatience = 5,
-      taskWeights = None,  // Use equal weights
+      taskWeights = None, // Use equal weights
       verbose = true
     )
 

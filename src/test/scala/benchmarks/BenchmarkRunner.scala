@@ -1,18 +1,17 @@
 package benchmarks
 
-import torchrec.basic.features._
-import torchrec.basic.metrics._
-import torchrec.data._
-import torchrec.models.ranking._
-import torchrec.models.matching._
-import torchrec.models.multi_task._
-import torchrec.models.generative._
-import torchrec.trainers._
+import torchrec.basic.features.*
+import torchrec.basic.metrics.*
+import torchrec.data.*
+import torchrec.models.ranking.*
+import torchrec.models.matching.*
+import torchrec.models.multi_task.{AITM, ESMM, MMOE, MetaHeac, OMoE, PLE, SharedBottom, SingleTaskModel}
+import torchrec.models.generative.*
+import torchrec.trainers.*
 import torchrec.utils.DeviceSupport
 import torchrec.Implicits.tensor
-import torchrec.Implicits._
-
-import org.bytedeco.pytorch._
+import torchrec.Implicits.*
+import org.bytedeco.pytorch.*
 import org.bytedeco.pytorch.global.torch
 import org.bytedeco.pytorch.global.torch.ScalarType
 
@@ -23,38 +22,41 @@ import scala.collection.mutable
  * Benchmark task types
  */
 sealed trait BenchmarkTask
+
 case object Ranking extends BenchmarkTask
+
 case object Matching extends BenchmarkTask
+
 case object MultiTask extends BenchmarkTask
 
 /**
  * Benchmark result
  */
 case class BenchmarkResult(
-  task: String,
-  model: String,
-  dataset: String,
-  metrics: Map[String, Float],
-  trainingTime: Float,
-  throughput: Float,
-  memoryUsed: Float
-)
+                            task: String,
+                            model: String,
+                            dataset: String,
+                            metrics: Map[String, Float],
+                            trainingTime: Float,
+                            throughput: Float,
+                            memoryUsed: Float
+                          )
 
 /**
  * Benchmark configuration
  */
 case class BenchmarkConfig(
-  task: BenchmarkTask,
-  modelName: String,
-  datasetName: String,
-  numSamples: Int = 10000,
-  embedDim: Int = 8,
-  numEpochs: Int = 3,
-  batchSize: Int = 256,
-  learningRate: Float = 1e-3f,
-  device: String = DeviceSupport.backend,
-  seed: Int = 42
-)
+                            task: BenchmarkTask,
+                            modelName: String,
+                            datasetName: String,
+                            numSamples: Int = 10000,
+                            embedDim: Int = 8,
+                            numEpochs: Int = 3,
+                            batchSize: Int = 256,
+                            learningRate: Float = 1e-3f,
+                            device: String = DeviceSupport.backend,
+                            seed: Int = 42
+                          )
 
 /**
  * Main benchmark runner
@@ -69,13 +71,37 @@ object BenchmarkRunner {
     // Run all benchmarks
     val results = mutable.ListBuffer[BenchmarkResult]()
 
-//    results += runLiquidNetWorkBenchmark()
+    results += runESMMBenchmark()
+    //    System.gc()
+    //    results += runMetaHeacBenchmark()
+    //
+    results += runMMOEBenchmark()
+    System.gc()
+    results += runOMoEBenchmark()
+    results += runPLEBenchmark()
+    System.gc()
+    results += runAITMBenchmark()
+    //    results += runESMMBenchmark()
+    System.gc()
+    results += runMetaHeacBenchmark()
+    System.gc()
+    results += runSharedBottomBenchmark()
+    results += runSingleTaskModelBenchmark()
+    System.gc()
+
+
+    results += runLiquidNetWorkBenchmark()
 
     // Ranking benchmarks
+    // AliExpress dataset benchmarks with specific models
+    //    results += runXGBoostAliExpressBenchmark()
+    //    System.gc()
+    //    results += runMAMBAAiExpressBenchmark()
+    //    System.gc()
+    //    results += runAliExpressBenchmark()
+    //    System.gc()
 
-    System.gc()
- 
-//    
+    //
     results += runAFMBenchmark()
     results += runAFNBenchmark()
     results += runAutoIntBenchmark()
@@ -84,7 +110,7 @@ object BenchmarkRunner {
     results += runDCNv2Benchmark()
     results += runDeepFMBenchmark()
     System.gc()
-//    DIEN DIN ETA BST LNN SIM HLLM HSTU RQVAE TIGER
+    //    DIEN DIN ETA BST LNN SIM HLLM HSTU RQVAE TIGER
     results += runDIENBenchmark() //pass
 
     results += runDINBenchmark()
@@ -93,7 +119,7 @@ object BenchmarkRunner {
     results += runBSTBenchmark()
     results += runLNNBenchmark()
 
-    results += runSIMBenchmark()//pass
+    results += runSIMBenchmark() //pass
     results += runEDCNBenchmark()
     System.gc()
     results += runFiBiNetBenchmark()
@@ -113,7 +139,7 @@ object BenchmarkRunner {
     results += runXGBoostBenchmark()
     System.gc()
 
-//     Matching benchmarks ComirecDR ComirecSA GRU4Rec  MIND NARM SASRec SINE STAMP YoutubeDNN
+    //     Matching benchmarks ComirecDR ComirecSA GRU4Rec  MIND NARM SASRec SINE STAMP YoutubeDNN
     results += runDSSMBenchmark()
     results += runMAMBABenchmark()
     results += runNCFBenchmark()
@@ -131,7 +157,7 @@ object BenchmarkRunner {
     results += runYoutubeDNNBenchmark()
 
     System.gc()
-//     Multi-task benchmarks
+    //     Multi-task benchmarks
 
     results += runAITMBenchmark()
     results += runESMMBenchmark()
@@ -147,19 +173,19 @@ object BenchmarkRunner {
     results += runSingleTaskModelBenchmark()
     System.gc()
 
-
     results += runLLM4RecBenchmark()
+    System.gc()
     results += runHLLMBenchmark()
     System.gc()
     results += runHSTUBenchmark()
+    System.gc()
     results += runRQVAEBenchmark()
+    System.gc()
     results += runTIGERBenchmark()
     System.gc()
 
-    // AliExpress dataset benchmarks with specific models
-    results += runXGBoostAliExpressBenchmark()
-    results += runMAMBAAiExpressBenchmark()
-    results += runAliExpressBenchmark()
+
+
 
     // Print summary
     printResults(results.toList)
@@ -314,12 +340,12 @@ object BenchmarkRunner {
       val config = BenchmarkConfig(task = Ranking, modelName = "LiquidNetWork", datasetName = "synthetic", numSamples = 1000, embedDim = 8, numEpochs = 2, batchSize = 128)
       runRankingBenchmark(config)
     }
-//    catch {
-//      case e: Throwable =>
-//        println(s"  [FAIL] LiquidNetWork: ${e.getMessage}")
-//        e.printStackTrace()
-//        BenchmarkResult("ranking", "LiquidNetWork", "synthetic", Map("error" -> 0.0f), 0.0f, 0.0f, 0.0f)
-//    }
+    //    catch {
+    //      case e: Throwable =>
+    //        println(s"  [FAIL] LiquidNetWork: ${e.getMessage}")
+    //        e.printStackTrace()
+    //        BenchmarkResult("ranking", "LiquidNetWork", "synthetic", Map("error" -> 0.0f), 0.0f, 0.0f, 0.0f)
+    //    }
   }
 
   def runLLM4RecBenchmark(): BenchmarkResult = {
@@ -874,7 +900,7 @@ object BenchmarkRunner {
       val metrics = trainer.evaluate(testLoader)
       val auc = metrics.getOrElse("AUC", 0.0f)
 
-      println(f"  [Result] AUC=$auc%.4f, TrainingTime=${trainingTime%.2f}s")
+      println(f"  [Result] AUC=$auc%.4f, TrainingTime=${trainingTime % .2f}s")
 
       BenchmarkResult(
         task = "ranking",
@@ -924,7 +950,7 @@ object BenchmarkRunner {
       for (i <- 0 until numSamples) {
         val baseIdx = catTensor.select(0, i).itemSafe().toInt
         for (j <- 0 until seqLen) {
-          val offset = rng.nextInt(100) - 50  // slight variation
+          val offset = rng.nextInt(100) - 50 // slight variation
           tokensArr(i * seqLen + j) = math.max(0, math.min(vocabSize - 1, baseIdx + offset)).toFloat
         }
       }
@@ -1003,7 +1029,7 @@ object BenchmarkRunner {
 
       val recall = trainer.evaluate(trainLoader, topk = 10)
 
-      println(f"  [Result] Recall@10=$recall%.4f, TrainingTime=${trainingTime%.2f}s")
+      println(f"  [Result] Recall@10=$recall%.4f, TrainingTime=${trainingTime % .2f}s")
 
       BenchmarkResult(
         task = "matching",
@@ -1177,6 +1203,7 @@ object BenchmarkRunner {
   def runMultiTaskBenchmark(config: BenchmarkConfig): BenchmarkResult = {
     val taskNames = List("cvr", "ctr")
     val taskTypes = List("classification", "classification")
+    val nTasks = taskNames.size
 
     val (trainData, _, testData) = torchrec.data.DataGenerator.generateMultiTaskData(
       numSamples = config.numSamples,
@@ -1192,17 +1219,68 @@ object BenchmarkRunner {
       SparseFeature(s"feat_$i", 100, config.embedDim)
     }.toList
 
+    // =========================================================================
+    // ✅ 统一提取通用超参数配置，匹配 Map[String, Any] 签名规范
+    // =========================================================================
+    val sharedMlpParams = Map[String, Any](
+      "dims" -> List(64L, 32L),
+      "activation" -> "relu",
+      "dropout" -> 0.2f
+    )
+
+    val towerParams = Map[String, Any](
+      "dims" -> List(32L),
+      "activation" -> "relu",
+      "dropout" -> 0.2f
+    )
+
+    // 为每个任务复制一份 Tower 参数
+    val towerParamsList = List.fill(nTasks)(towerParams)
+
     val model: Module = config.modelName match {
       case "MMOE" =>
-        new MMOE(features, taskNames, taskTypes, config.embedDim, 4, List(64L), List(32L), 0.2f, config.device)
+        new MMOE(
+          features = features,
+          taskTypes = taskTypes,
+          nExpert = 4,
+          expertParams = sharedMlpParams,
+          towerParamsList = towerParamsList,
+          device = config.device
+        )
+
       case "SharedBottom" =>
-        new SharedBottom(features, taskNames, config.embedDim, List(64L, 32L), List(32L), 0.2f, config.device)
+        new SharedBottom(
+          features = features,
+          taskTypes = taskTypes,
+          bottomParams = sharedMlpParams,
+          towerParamsList = towerParamsList,
+          device = config.device
+        )
+
       case "PLE" =>
-        new PLE(features, taskNames, config.embedDim, 2, 2, 3, List(64L), List(32L), 0.2f, config.device)
-      case "ESMM" =>
-        new ESMM(features, taskNames, config.embedDim, List(64L, 32L), 0.2f, config.device)
+        new PLE(
+          features = features,
+          taskTypes = taskTypes,
+          nLevel = 3,
+          nExpertSpecific = 2,
+          nExpertShared = 2,
+          expertParams = sharedMlpParams,
+          towerParamsList = towerParamsList,
+          device = config.device
+        )
+
       case "AITM" =>
-        new AITM(features, taskNames, config.embedDim, 64, 0.2f, config.device)
+        new AITM(
+          features = features,
+          nTask = nTasks, // ✅ 修复：需要传入 Int，而不是 List[String]
+          bottomParams = sharedMlpParams,
+          towerParamsList = towerParamsList,
+          device = config.device
+        )
+
+      case "ESMM" =>
+        ESMM(features, taskNames, config.embedDim, List(64L, 32L), 0.2f, config.device)
+
       case "OMoE" =>
         new OMoE(features, taskNames, config.embedDim, 4, List(64L), List(32L), 0.2f, config.device)
       case "SingleTaskModel" =>
@@ -1210,7 +1288,15 @@ object BenchmarkRunner {
       case "MetaHeac" =>
         new MetaHeac(features, taskNames, config.embedDim, List(64L, 32L), List(32L, 16L), 4, 3, 0.2f, config.device)
       case _ =>
-        new MMOE(features, taskNames, taskTypes, config.embedDim, 4, List(64L), List(32L), 0.2f, config.device)
+        // 兜底同样使用字典形式
+        new MMOE(
+          features = features,
+          taskTypes = taskTypes,
+          nExpert = 4,
+          expertParams = sharedMlpParams,
+          towerParamsList = towerParamsList,
+          device = config.device
+        )
     }
 
     val startTime = System.currentTimeMillis()
@@ -1239,12 +1325,78 @@ object BenchmarkRunner {
       memoryUsed = 0.0f
     )
   }
+  //  def runMultiTaskBenchmark2(config: BenchmarkConfig): BenchmarkResult = {
+  //    val taskNames = List("cvr", "ctr")
+  //    val taskTypes = List("classification", "classification")
+  //
+  //    val (trainData, _, testData) = torchrec.data.DataGenerator.generateMultiTaskData(
+  //      numSamples = config.numSamples,
+  //      numFeatures = 10,
+  //      taskNames = taskNames,
+  //      vocabSize = 100,
+  //      seed = config.seed
+  //    )
+  //
+  //    val trainLoader = new DataLoader(trainData, config.batchSize, shuffle = true)
+  //
+  //    val features = (0 until 10).map { i =>
+  //      SparseFeature(s"feat_$i", 100, config.embedDim)
+  //    }.toList
+  //
+  //    val model: Module = config.modelName match {
+  //      case "MMOE" =>
+  //        new MMOE(features, taskNames, taskTypes, config.embedDim, 4, List(64L), List(32L), 0.2f, config.device)
+  //      case "SharedBottom" =>
+  //        new SharedBottom(features, taskNames, config.embedDim, List(64L, 32L), List(32L), 0.2f, config.device)
+  //      case "PLE" =>
+  //        new PLE(features, taskNames, config.embedDim, 2, 2, 3, List(64L), List(32L), 0.2f, config.device)
+  //      case "AITM" =>
+  //        new AITM(features, taskNames, config.embedDim, 64, 0.2f, config.device)
+  //
+  //      case "ESMM" =>
+  //        new ESMM(features, taskNames, config.embedDim, List(64L, 32L), 0.2f, config.device)
+  //      case "OMoE" =>
+  //        new OMoE(features, taskNames, config.embedDim, 4, List(64L), List(32L), 0.2f, config.device)
+  //      case "SingleTaskModel" =>
+  //        new SingleTaskModel(features, taskNames, config.embedDim, List(64L), List(32L), 0.2f, config.device)
+  //      case "MetaHeac" =>
+  //        new MetaHeac(features, taskNames, config.embedDim, List(64L, 32L), List(32L, 16L), 4, 3, 0.2f, config.device)
+  //      case _ =>
+  //        new MMOE(features, taskNames, taskTypes, config.embedDim, 4, List(64L), List(32L), 0.2f, config.device)
+  //    }
+  //
+  //    val startTime = System.currentTimeMillis()
+  //
+  //    val trainer = new MTLTrainer(
+  //      model,
+  //      taskNames,
+  //      learningRate = config.learningRate,
+  //      device = config.device,
+  //      numEpochs = config.numEpochs,
+  //      verbose = false
+  //    )
+  //
+  //    trainer.fit(trainLoader)
+  //
+  //    val trainingTime = (System.currentTimeMillis() - startTime) / 1000.0f
+  //    val throughput = config.numSamples * config.numEpochs / trainingTime
+  //
+  //    BenchmarkResult(
+  //      task = "multitask",
+  //      model = config.modelName,
+  //      dataset = config.datasetName,
+  //      metrics = Map("cvr_auc" -> 0.75f, "ctr_auc" -> 0.78f),
+  //      trainingTime = trainingTime,
+  //      throughput = throughput,
+  //      memoryUsed = 0.0f
+  //    )
+  //  }
 
   def runMEMBAWithSequence(
-    config: BenchmarkConfig,
-    features: List[SparseFeature],
-    seqFeatures: List[SequenceFeature]
-  ): Unit = {
+                            config: BenchmarkConfig,
+                            features: List[SparseFeature],
+                            seqFeatures: List[SequenceFeature]
+                          ): Unit = {
     val numSamples = 1000
     val batchSize = 128
     val seqLen = 20
@@ -1294,10 +1446,10 @@ object BenchmarkRunner {
   }
 
   def runLiquidNetWorkWithSequence(
-    config: BenchmarkConfig,
-    features: List[SparseFeature],
-    seqFeatures: List[SequenceFeature]
-  ): Unit = {
+                                    config: BenchmarkConfig,
+                                    features: List[SparseFeature],
+                                    seqFeatures: List[SequenceFeature]
+                                  ): Unit = {
     val numSamples = 1000
     val batchSize = 128
     val seqLen = 20
@@ -1538,7 +1690,8 @@ object BenchmarkRunner {
 
     val features = List(SparseFeature("user_id", vocabSize, config.embedDim))
     val sequenceFeatures = List(SequenceFeature("seq_feat", vocabSize, config.embedDim, maxLen = seqLen))
-
+    // ✅ 修复 2：单独为双塔结构准备 item 特征
+    val itemFeatures = List(SparseFeature("item_id", vocabSize, config.embedDim))
     val model: Module = config.modelName match {
       case "ComirecDR" =>
         new ComirecDR(
@@ -1562,13 +1715,26 @@ object BenchmarkRunner {
         )
       case "GRU4Rec" =>
         new GRU4Rec(
-          features = features,
-          embedDim = config.embedDim,
-          hiddenDim = 8,
-          numLayers = 2,
-          dropout = 0.1f,
+          userFeatures = features,
+          historyFeatures = sequenceFeatures,
+          itemFeatures = itemFeatures,
+          negItemFeature = None,
+          userParams = Map(
+            "num_layers" -> 2,
+            "dropout" -> 0.1f,
+            "dims" -> List(config.embedDim * 2L, config.embedDim.toLong) // 适配 MLP 输出维度
+          ),
+          temperature = 1.0f,
           device = config.device
         )
+      //        new GRU4Rec(
+      //          features = features,
+      //          embedDim = config.embedDim,
+      //          hiddenDim = 8,
+      //          numLayers = 2,
+      //          dropout = 0.1f,
+      //          device = config.device
+      //        )
       case "MIND" =>
         new MIND(
           features = features,
@@ -1625,7 +1791,15 @@ object BenchmarkRunner {
           device = config.device
         )
       case _ =>
-        new GRU4Rec(features, config.embedDim, 8, 2, 0.1f, config.device)
+        new GRU4Rec(
+          userFeatures = features,
+          historyFeatures = sequenceFeatures,
+          itemFeatures = itemFeatures,
+          negItemFeature = None,
+          userParams = Map("num_layers" -> 2, "dropout" -> 0.1f),
+          device = config.device
+        )
+      //        new GRU4Rec(features, config.embedDim, 8, 2, 0.1f, config.device)
     }
 
     val startTime = System.currentTimeMillis()
@@ -1878,19 +2052,21 @@ object BenchmarkRunner {
       case "HLLM" =>
         new HLLM(
           itemEmbeddings = itemEmbeddings,
-          features = features,
-          embedDim = config.embedDim,
-          numHeads = 2,
-          numLayers = 2,
+          vocabSize = vocabSize,
+          dModel = config.embedDim,
+          //          features = features,
+          //          embedDim = config.embedDim,
+          nHeads = 2,
+          nLayers = 2,
           dropout = 0.2f,
           device = config.device
         )
       case "HSTU" =>
         new HSTU(
           vocabSize = vocabSize.toLong,
-          embedDim = config.embedDim,
-          numHeads = 2,
-          numLayers = 2,
+          //          embedDim = config.embedDim,
+          //          numHeads = 2,
+          //          numLayers = 2,
           maxSeqLen = seqLen,
           dropout = 0.2f,
           device = config.device
@@ -1913,7 +2089,16 @@ object BenchmarkRunner {
           device = config.device
         )
       case _ =>
-        new HLLM(itemEmbeddings, features, config.embedDim, 2, 2, 0.2f, config.device)
+        new HSTU(
+          vocabSize = vocabSize.toLong,
+          //          embedDim = config.embedDim,
+          //          numHeads = 2,
+          //          numLayers = 2,
+          maxSeqLen = seqLen,
+          dropout = 0.2f,
+          device = config.device
+        )
+      //        new HLLM(itemEmbeddings, features, config.embedDim, 2, 2, 0.2f, config.device)
     }
 
     val startTime = System.currentTimeMillis()

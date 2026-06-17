@@ -71,14 +71,22 @@ object MMOEExample {
 
     // 4. Create model
     println("\n[4] Creating MMOE model...")
+    val expertParams = Map[String, Any](
+      "dims" -> expertDims,
+      "activation" -> "relu",
+      "dropout" -> 0.2f
+    )
+    val towerParams = Map[String, Any](
+      "dims" -> towerDims,
+      "activation" -> "relu",
+      "dropout" -> 0.2f
+    )
     val model = new MMOE(
       features = features,
-      taskNames = taskNames,
       taskTypes = taskTypes,
-      embedDim = embedDim,
-      numExperts = numExperts,
-      expertDims = expertDims,
-      towerDims = towerDims,
+      nExpert = numExperts,
+      expertParams = expertParams,
+      towerParamsList = List(towerParams, towerParams),
       device = device
     )
     println(s"  Model created: MMOE(num_experts=$numExperts, expert_dims=$expertDims)")

@@ -16,15 +16,16 @@ import torchrec.trainers._
 object MatchingDSSM {
 
   def main(args: Array[String]): Unit = {
-    println("""
-      |=============================================================
-      | Tutorial: Two-Tower Matching with DSSM
-      |=============================================================
-      |
-      | DSSM learns separate representations for users and items,
-      | enabling efficient nearest-neighbor search for retrieval.
-      |
-      |""".stripMargin)
+    println(
+      """
+        |=============================================================
+        | Tutorial: Two-Tower Matching with DSSM
+        |=============================================================
+        |
+        | DSSM learns separate representations for users and items,
+        | enabling efficient nearest-neighbor search for retrieval.
+        |
+        |""".stripMargin)
 
     // Generate matching data first so we can build feature definitions that match
     println("Defining features and generating matching data...")
@@ -81,7 +82,7 @@ object MatchingDSSM {
     val trainer = new MatchTrainer(
       model = model,
       learningRate = 1e-3f,
-      mode = 2,  // listwise
+      mode = 2, // listwise
       numEpochs = 3,
       verbose = true
     )
@@ -95,13 +96,14 @@ object MatchingDSSM {
     val userEmbeds = trainer.inferenceEmbedding(testLoader, "user")
     println(f"  User embeddings shape: ${userEmbeds.head.shape.mkString(", ")}")
 
-    println("""
-      |
-      |=============================================================
-      | Tutorial Complete!
-      |=============================================================
-      |
-      | Next: Build ANN index for fast retrieval
-      |""".stripMargin)
+    println(
+      """
+        |
+        |=============================================================
+        | Tutorial Complete!
+        |=============================================================
+        |
+        | Next: Build ANN index for fast retrieval
+        |""".stripMargin)
   }
 }

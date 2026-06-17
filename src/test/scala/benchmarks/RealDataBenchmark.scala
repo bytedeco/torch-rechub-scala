@@ -10,10 +10,10 @@ import torchrec.utils.DeviceSupport
 
 /**
  * Real Dataset Benchmark — downloads and benchmarks 4 real public datasets:
- *   MovieLens 1M   (DSSM two-tower retrieval)
- *   Criteo day_15  (DeepFM CTR ranking)
- *   Census-Income  (DeepFM binary classification)
- *   Amazon Reviews (DSSM two-tower retrieval)
+ * MovieLens 1M   (DSSM two-tower retrieval)
+ * Criteo day_15  (DeepFM CTR ranking)
+ * Census-Income  (DeepFM binary classification)
+ * Amazon Reviews (DSSM two-tower retrieval)
  *
  * Falls back to synthetic data if download fails.
  * All benchmarks must complete without crashing to be considered passing.
@@ -48,7 +48,7 @@ object RealDataBenchmark {
   // ---------------------------------------------------------------------------
   // MovieLens 1M
   // ---------------------------------------------------------------------------
-  def benchmarkMovieLens(device : String): (String, String, Float, Float, Boolean) = {
+  def benchmarkMovieLens(device: String): (String, String, Float, Float, Boolean) = {
     println("\n" + "=" * 60)
     println("MovieLens 1M — DSSM Two-Tower Retrieval")
     println("=" * 60)
@@ -73,7 +73,7 @@ object RealDataBenchmark {
 
       val model = new DSSM(List(userFeat), List(movieFeat), 16, List(64L, 32L), 0.2f, device)
 
-      val trainer = new MatchTrainer(model, learningRate = 0.001f,device =device, numEpochs = 3, verbose = true)
+      val trainer = new MatchTrainer(model, learningRate = 0.001f, device = device, numEpochs = 3, verbose = true)
 
       val t0 = System.currentTimeMillis()
       trainer.fit(trainLoader, Some(valLoader))
@@ -92,7 +92,7 @@ object RealDataBenchmark {
   // ---------------------------------------------------------------------------
   // Criteo day_15 CTR
   // ---------------------------------------------------------------------------
-  def benchmarkCriteo(device :String): (String, String, Float, Float, Boolean) = {
+  def benchmarkCriteo(device: String): (String, String, Float, Float, Boolean) = {
     println("\n" + "=" * 60)
     println("Criteo day_15 — DeepFM CTR Ranking")
     println("=" * 60)
@@ -114,7 +114,7 @@ object RealDataBenchmark {
 
       val model = new DeepFM(sparseFeats, embedDim = 8, mlpDims = List(128L, 64L), dropout = 0.2f, device = device)
 
-      val trainer = new CTRTrainer(model, learningRate = 0.01f,device =device, numEpochs = 3, earlyStopPatience = 3, verbose = true)
+      val trainer = new CTRTrainer(model, learningRate = 0.01f, device = device, numEpochs = 3, earlyStopPatience = 3, verbose = true)
 
       val t0 = System.currentTimeMillis()
       trainer.fit(trainLoader, Some(valLoader))
@@ -137,7 +137,7 @@ object RealDataBenchmark {
   // ---------------------------------------------------------------------------
   // Census-Income (UCI Adult)
   // ---------------------------------------------------------------------------
-  def benchmarkCensus(device :String): (String, String, Float, Float, Boolean) = {
+  def benchmarkCensus(device: String): (String, String, Float, Float, Boolean) = {
     println("\n" + "=" * 60)
     println("Census-Income (UCI Adult) — DeepFM Binary Classification")
     println("=" * 60)
@@ -161,19 +161,19 @@ object RealDataBenchmark {
       //                    hours-per-week (6 features — not used as sparse in DeepFM)
       // NOTE: education_num (index 4) is numerical in CensusIncomeDataset, not categorical
       val features = List(
-        SparseFeature("workclass",      100, 4),
-        SparseFeature("education",      100, 4),
+        SparseFeature("workclass", 100, 4),
+        SparseFeature("education", 100, 4),
         SparseFeature("marital_status", 100, 4),
-        SparseFeature("occupation",     100, 4),
-        SparseFeature("relationship",   100, 4),
-        SparseFeature("race",          100, 4),
-        SparseFeature("sex",           100, 4),
+        SparseFeature("occupation", 100, 4),
+        SparseFeature("relationship", 100, 4),
+        SparseFeature("race", 100, 4),
+        SparseFeature("sex", 100, 4),
         SparseFeature("native_country", 100, 4)
       )
 
       val model = new DeepFM(features, embedDim = 8, mlpDims = List(32L, 16L), dropout = 0.2f, device = device)
 
-      val trainer = new CTRTrainer(model, learningRate = 0.01f, numEpochs = 3, device= device,earlyStopPatience = 3, verbose = true)
+      val trainer = new CTRTrainer(model, learningRate = 0.01f, numEpochs = 3, device = device, earlyStopPatience = 3, verbose = true)
 
       val t0 = System.currentTimeMillis()
       trainer.fit(trainLoader, Some(valLoader))
@@ -196,7 +196,7 @@ object RealDataBenchmark {
   // ---------------------------------------------------------------------------
   // Amazon Fine Food Reviews
   // ---------------------------------------------------------------------------
-  def benchmarkAmazon(device : String): (String, String, Float, Float, Boolean) = {
+  def benchmarkAmazon(device: String): (String, String, Float, Float, Boolean) = {
     println("\n" + "=" * 60)
     println("Amazon Fine Food Reviews — DSSM Two-Tower Retrieval")
     println("=" * 60)
@@ -221,7 +221,7 @@ object RealDataBenchmark {
 
       val model = new DSSM(List(userFeat), List(itemFeat), 16, List(64L, 32L), 0.2f, device)
 
-      val trainer = new MatchTrainer(model, learningRate = 0.001f,device = device, numEpochs = 3, verbose = true)
+      val trainer = new MatchTrainer(model, learningRate = 0.001f, device = device, numEpochs = 3, verbose = true)
 
       val t0 = System.currentTimeMillis()
       trainer.fit(trainLoader, Some(valLoader))

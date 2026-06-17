@@ -17,15 +17,16 @@ import org.bytedeco.pytorch.global.torch.ScalarType
 object RankingDIN {
 
   def main(args: Array[String]): Unit = {
-    println("""
-      |=============================================================
-      | Tutorial: Sequence-Aware Ranking with DIN
-      |=============================================================
-      |
-      | Deep Interest Network (DIN) uses attention to model
-      | user behavior history for personalized CTR prediction.
-      |
-      |""".stripMargin)
+    println(
+      """
+        |=============================================================
+        | Tutorial: Sequence-Aware Ranking with DIN
+        |=============================================================
+        |
+        | Deep Interest Network (DIN) uses attention to model
+        | user behavior history for personalized CTR prediction.
+        |
+        |""".stripMargin)
 
     // Configuration
     val features = List(
@@ -87,12 +88,13 @@ object RankingDIN {
     println("\nDIN model ready for training!")
     println("  Use CTRTrainer to train this model with sequence data.")
 
-    println("""
-      |
-      |=============================================================
-      | Tutorial Complete!
-      |=============================================================
-      |
-      |""".stripMargin)
+    println(
+      """
+        |
+        |=============================================================
+        | Tutorial Complete!
+        |=============================================================
+        |
+        |""".stripMargin)
   }
 }

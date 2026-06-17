@@ -27,15 +27,16 @@ object QuickStartCTR {
     DeviceSupport.setDevice(DeviceSupport.DeviceType.AUTO)
     val device = DeviceSupport.backend
     println(s"[DeviceSupport] Active device: $device")
-    println("""
-      |=============================================================
-      | Quick Start: Click-Through Rate Prediction with DeepFM
-      |=============================================================
-      |
-      | This tutorial walks you through the basic workflow for
-      | building a CTR prediction model using DeepFM.
-      |
-      |""".stripMargin)
+    println(
+      """
+        |=============================================================
+        | Quick Start: Click-Through Rate Prediction with DeepFM
+        |=============================================================
+        |
+        | This tutorial walks you through the basic workflow for
+        | building a CTR prediction model using DeepFM.
+        |
+        |""".stripMargin)
 
     // Step 1: Prepare data
     println("Step 1: Preparing data...")
@@ -96,17 +97,18 @@ object QuickStartCTR {
       println(f"    $name: $value%.4f")
     }
 
-    println("""
-      |
-      |=============================================================
-      | Quick Start Complete!
-      |=============================================================
-      |
-      | Next steps:
-      | - Try other models (DCN, WideDeep, DIN)
-      | - Use real datasets (Criteo, Avazu)
-      | - Tune hyperparameters
-      |
-      |""".stripMargin)
+    println(
+      """
+        |
+        |=============================================================
+        | Quick Start Complete!
+        |=============================================================
+        |
+        | Next steps:
+        | - Try other models (DCN, WideDeep, DIN)
+        | - Use real datasets (Criteo, Avazu)
+        | - Tune hyperparameters
+        |
+        |""".stripMargin)
   }
 }

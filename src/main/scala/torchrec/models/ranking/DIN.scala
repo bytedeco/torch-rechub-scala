@@ -90,7 +90,7 @@ class AttentionNet(
   private val queryProj = new LinearImpl(queryDim * 2, hiddenUnits)
   private val keyProj = new LinearImpl(queryDim * 2, hiddenUnits)
   private val valueProj = new LinearImpl(queryDim, outputDim)
-  private val attentionNet = new MLP(hiddenUnits, List(1L), 1L, "relu", 0f, false, false, device)
+  private val attentionNet = new MLP(hiddenUnits, List(1L), 1L, "relu", 0f, false, false, false, device)
 
   register_module("queryProj", queryProj)
   register_module("keyProj", keyProj)

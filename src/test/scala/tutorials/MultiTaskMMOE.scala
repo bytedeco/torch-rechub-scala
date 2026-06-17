@@ -20,19 +20,19 @@ object MultiTaskMMOE {
 
   def main(args: Array[String]): Unit = {
     // Use CPU to avoid CUDA device issues
-//    DeviceSupport.setDevice(DeviceSupport.DeviceType.CPU)
     DeviceSupport.setDevice(DeviceSupport.DeviceType.AUTO)
     val device = DeviceSupport.backend
     println(s"[DeviceSupport] Active device: $device")
-    println("""
-      |=============================================================
-      | Tutorial: Multi-Task Learning with MMOE
-      |=============================================================
-      |
-      | MMOE uses multiple experts with task-specific gates to
-      | handle task relationships and conflicts in multi-task learning.
-      |
-      |""".stripMargin)
+    println(
+      """
+        |=============================================================
+        | Tutorial: Multi-Task Learning with MMOE
+        |=============================================================
+        |
+        | MMOE uses multiple experts with task-specific gates to
+        | handle task relationships and conflicts in multi-task learning.
+        |
+      """.stripMargin)
 
     // Define task configuration
     val taskNames = List("cvr", "ctr", "like")
@@ -52,14 +52,22 @@ object MultiTaskMMOE {
 
     // Create MMOE model
     println("\nCreating MMOE model...")
+    val expertParams = Map[String, Any](
+      "dims" -> List(128L),
+      "activation" -> "relu",
+      "dropout" -> 0.2f
+    )
+    val towerParams = Map[String, Any](
+      "dims" -> List(64L),
+      "activation" -> "relu",
+      "dropout" -> 0.2f
+    )
     val model = new MMOE(
       features = features,
-      taskNames = taskNames,
       taskTypes = taskTypes,
-      embedDim = 16,
-      numExperts = 4,
-      expertDims = List(128),
-      towerDims = List(64L),
+      nExpert = 4,
+      expertParams = expertParams,
+      towerParamsList = List(towerParams, towerParams, towerParams),
       device = device
     )
     println(s"  Model: MMOE(tasks=${taskNames.mkString(", ")})")
@@ -81,14 +89,14 @@ object MultiTaskMMOE {
     println(f"  Test: ${testData.size}%,d")
 
     // Create data loaders
-    val trainLoader = new DataLoader(trainData, batchSize = 256, shuffle = true, device = device)
-    val valLoader = new DataLoader(valData, batchSize = 256, shuffle = false, device = device)
+    val trainLoader = new DataLoader(trainData, 256, shuffle = true, device = device)
+    val valLoader = new DataLoader(valData, 256, shuffle = false, device = device)
 
     // Define task weights
     val taskWeights = Map(
-      "cvr" -> 1.0f,  // Conversion - primary task
-      "ctr" -> 1.0f,  // Click-through - secondary
-      "like" -> 0.8f  // Like - auxiliary task
+      "cvr" -> 1.0f, // Conversion - primary task
+      "ctr" -> 1.0f, // Click-through - secondary
+      "like" -> 0.8f // Like - auxiliary task
     )
 
     // Create trainer
@@ -120,16 +128,17 @@ object MultiTaskMMOE {
       println(f"    $task (weight=$weight): AUC=$auc%.4f, LogLoss=$logloss%.4f, Accuracy=$acc%.4f")
     }
 
-    println("""
-      |
-      |=============================================================
-      | Tutorial Complete!
-      |=============================================================
-      |
-      | Try other multi-task models:
-      | - PLE: Progressive Layered Extraction
-      | - ESMM: Entire Space Multi-Task Model
-      | - SharedBottom: Hard parameter sharing
-      |""".stripMargin)
+    println(
+      """
+        |
+        |=============================================================
+        | Tutorial Complete!
+        |=============================================================
+        |
+        | Try other multi-task models:
+        | - PLE: Progressive Layered Extraction
+        | - ESMM: Entire Space Multi-Task Model
+        | - SharedBottom: Hard parameter sharing
+        |""".stripMargin)
   }
 }

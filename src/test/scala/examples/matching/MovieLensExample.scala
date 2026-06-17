@@ -173,7 +173,7 @@ object MovieLensExample {
       learningRate = learningRate,
       weightDecay = weightDecay,
       device = device,
-      mode = 2,  // listwise training
+      mode = 2, // listwise training
       temperature = 0.02f,
       numEpochs = numEpochs,
       verbose = true

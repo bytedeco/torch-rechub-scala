@@ -21,15 +21,15 @@ object DataGenerator {
    * Returns (trainDataset, valDataset, testDataset) with the given feature names.
    */
   def generateRankingData(
-    numSamples: Int,
-    numSparseFeatures: Int,
-    numDenseFeatures: Int,
-    vocabSize: Int,
-    trainRatio: Float = 0.7f,
-    valRatio: Float = 0.1f,
-    seed: Int = 42,
-    featureNames: Seq[String] = Nil
-  ): (Dataset, Dataset, Dataset) = {
+                           numSamples: Int,
+                           numSparseFeatures: Int,
+                           numDenseFeatures: Int,
+                           vocabSize: Int,
+                           trainRatio: Float = 0.7f,
+                           valRatio: Float = 0.1f,
+                           seed: Int = 42,
+                           featureNames: Seq[String] = Nil
+                         ): (Dataset, Dataset, Dataset) = {
     val rng = new Random(seed)
 
     // Build feature names: use provided names or generate sparse_N/dense_N
@@ -99,14 +99,14 @@ object DataGenerator {
    * Returns (trainDataset, valDataset, testDataset).
    */
   def generateMatchingData(
-    numUsers: Int,
-    numItems: Int,
-    avgSequenceLength: Int,
-    numUserFeatures: Int,
-    numItemFeatures: Int,
-    vocabSize: Int,
-    seed: Int = 42
-  ): (Dataset, Dataset, Dataset) = {
+                            numUsers: Int,
+                            numItems: Int,
+                            avgSequenceLength: Int,
+                            numUserFeatures: Int,
+                            numItemFeatures: Int,
+                            vocabSize: Int,
+                            seed: Int = 42
+                          ): (Dataset, Dataset, Dataset) = {
     val rng = new Random(seed)
 
     // User features
@@ -159,13 +159,13 @@ object DataGenerator {
    * Generate multi-task dataset (MMOE, ShareBottom, etc.)
    */
   def generateMultiTaskData(
-    numSamples: Int,
-    numFeatures: Int,
-    taskNames: List[String],
-    vocabSize: Int,
-    seed: Int = 42,
-    featureNames: Seq[String] = Nil
-  ): (Dataset, Dataset, Dataset) = {
+                             numSamples: Int,
+                             numFeatures: Int,
+                             taskNames: List[String],
+                             vocabSize: Int,
+                             seed: Int = 42,
+                             featureNames: Seq[String] = Nil
+                           ): (Dataset, Dataset, Dataset) = {
     generateRankingData(numSamples, numFeatures, 0, vocabSize, 0.8f, 0.1f, seed, featureNames)
   }
 }

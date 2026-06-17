@@ -14,7 +14,13 @@ import torchrec.basic.losses.{BCELoss, BCEWithLogitsLoss}
 import torchrec.utils.DeviceSupport
 
 /**
- * Trainer for multi-task learning models (MMOE, SharedBottom, PLE, AITM, ESMM)
+ * Trainer for multi-task learning models (MMOE, SharedBottom, PLE, AITM, ESMM, OMoE, SingleTaskModel, MetaHeac)
+ *
+ * Models return either:
+ * - Tensor: concatenated along dim=1 (ESMM, MMOE, SharedBottom, PLE, AITM, OMoE, SingleTaskModel)
+ * - Map[String, Tensor]: per task name (MetaHeac)
+ *
+ * The trainer extracts individual task predictions appropriately.
  */
 class MTLTrainer(
   model: Module,
@@ -38,6 +44,7 @@ class MTLTrainer(
     model.train(true)
     var bestMetric = 0.0f
     var patienceCounter = 0
+    val nTask = taskNames.size
 
     for (epoch <- 0 until numEpochs) {
       var totalLoss = 0.0f
@@ -52,266 +59,53 @@ class MTLTrainer(
         else {
           optimizer.zero_grad()
 
-          model match {
-            case mmoe: MMOE =>
-              val outputs = mmoe.forward(sparseFeats)
-              var totalWeightedLoss: Tensor = null.asInstanceOf[Tensor]
-              var totalWeight = 0.0f
-
-              for (taskName <- taskNames) {
-                outputs.get(taskName).foreach { pred =>
-                  val label = taskLabelsMap.get(taskName)
-                  if (label != null) {
-                    val actualBatchSize = label.size(0).toInt
-                    val target2D = if (pred.dim() == 1) pred.reshape(actualBatchSize, 1) else pred
-                    val label2D = label.view(actualBatchSize, 1).toType(ScalarType.Float)
-                    val taskLoss = bceLoss.apply(target2D, label2D)
-                    val weight = defaultWeights.getOrElse(taskName, 1.0f).toFloat
-                    if (totalWeightedLoss == null) {
-                      totalWeightedLoss = taskLoss.mul(new Scalar(weight.toDouble))
-                    } else {
-                      totalWeightedLoss = totalWeightedLoss.add(taskLoss.mul(new Scalar(weight.toDouble)))
-                    }
-                    totalWeight += weight
-                  }
-                }
-              }
-
-              if (totalWeightedLoss != null && totalWeight > 0) {
-                val avgLoss = totalWeightedLoss.div(new Scalar(totalWeight.toDouble))
-                avgLoss.backward()
-                optimizer.step()
-                totalLoss += avgLoss.item().toFloat
-              }
-              numBatches += 1
-
-            case sb: SharedBottom =>
-              val outputs = sb.forward(sparseFeats)
-              var totalWeightedLoss: Tensor = null.asInstanceOf[Tensor]
-              var totalWeight = 0.0f
-
-              for (taskName <- taskNames) {
-                outputs.get(taskName).foreach { pred =>
-                  val label = taskLabelsMap.get(taskName)
-                  if (label != null) {
-                    val actualBatchSize = label.size(0).toInt
-                    val target2D = if (pred.dim() == 1) pred.reshape(actualBatchSize, 1) else pred
-                    val label2D = label.view(actualBatchSize, 1).toType(ScalarType.Float)
-                    val taskLoss = bceLoss.apply(target2D, label2D)
-                    val weight = defaultWeights.getOrElse(taskName, 1.0f).toFloat
-                    if (totalWeightedLoss == null) {
-                      totalWeightedLoss = taskLoss.mul(new Scalar(weight.toDouble))
-                    } else {
-                      totalWeightedLoss = totalWeightedLoss.add(taskLoss.mul(new Scalar(weight.toDouble)))
-                    }
-                    totalWeight += weight
-                  }
-                }
-              }
-
-              if (totalWeightedLoss != null && totalWeight > 0) {
-                val avgLoss = totalWeightedLoss.div(new Scalar(totalWeight.toDouble))
-                avgLoss.backward()
-                optimizer.step()
-                totalLoss += avgLoss.item().toFloat
-              }
-              numBatches += 1
-
-            case ple: torchrec.models.multi_task.PLE =>
-              val outputs = ple.forward(sparseFeats)
-              var totalWeightedLoss: Tensor = null.asInstanceOf[Tensor]
-              var totalWeight = 0.0f
-
-              for (taskName <- taskNames) {
-                outputs.get(taskName).foreach { pred =>
-                  val label = taskLabelsMap.get(taskName)
-                  if (label != null) {
-                    val actualBatchSize = label.size(0).toInt
-                    val target2D = if (pred.dim() == 1) pred.reshape(actualBatchSize, 1) else pred
-                    val label2D = label.view(actualBatchSize, 1).toType(ScalarType.Float)
-                    val taskLoss = bceLoss.apply(target2D, label2D)
-                    val weight = defaultWeights.getOrElse(taskName, 1.0f).toFloat
-                    if (totalWeightedLoss == null) {
-                      totalWeightedLoss = taskLoss.mul(new Scalar(weight.toDouble))
-                    } else {
-                      totalWeightedLoss = totalWeightedLoss.add(taskLoss.mul(new Scalar(weight.toDouble)))
-                    }
-                    totalWeight += weight
-                  }
-                }
-              }
-
-              if (totalWeightedLoss != null && totalWeight > 0) {
-                val avgLoss = totalWeightedLoss.div(new Scalar(totalWeight.toDouble))
-                avgLoss.backward()
-                optimizer.step()
-                totalLoss += avgLoss.item().toFloat
-              }
-              numBatches += 1
-
-            case esmm: ESMM =>
-              val outputs = esmm.forward(sparseFeats)
-              var totalWeightedLoss: Tensor = null.asInstanceOf[Tensor]
-              var totalWeight = 0.0f
-
-              for (taskName <- taskNames) {
-                outputs.get(taskName).foreach { pred =>
-                  val label = taskLabelsMap.get(taskName)
-                  if (label != null) {
-                    val actualBatchSize = label.size(0).toInt
-                    val target2D = if (pred.dim() == 1) pred.reshape(actualBatchSize, 1) else pred
-                    val label2D = label.view(actualBatchSize, 1).toType(ScalarType.Float)
-                    val taskLoss = bceLoss.apply(target2D, label2D)
-                    val weight = defaultWeights.getOrElse(taskName, 1.0f).toFloat
-                    if (totalWeightedLoss == null) {
-                      totalWeightedLoss = taskLoss.mul(new Scalar(weight.toDouble))
-                    } else {
-                      totalWeightedLoss = totalWeightedLoss.add(taskLoss.mul(new Scalar(weight.toDouble)))
-                    }
-                    totalWeight += weight
-                  }
-                }
-              }
-
-              if (totalWeightedLoss != null && totalWeight > 0) {
-                val avgLoss = totalWeightedLoss.div(new Scalar(totalWeight.toDouble))
-                avgLoss.backward()
-                optimizer.step()
-                totalLoss += avgLoss.item().toFloat
-              }
-              numBatches += 1
-
-            case aitm: torchrec.models.multi_task.AITM =>
-              val outputs = aitm.forward(sparseFeats)
-              var totalWeightedLoss: Tensor = null.asInstanceOf[Tensor]
-              var totalWeight = 0.0f
-
-              for (taskName <- taskNames) {
-                outputs.get(taskName).foreach { pred =>
-                  val label = taskLabelsMap.get(taskName)
-                  if (label != null) {
-                    val actualBatchSize = label.size(0).toInt
-                    val target2D = if (pred.dim() == 1) pred.reshape(actualBatchSize, 1) else pred
-                    val label2D = label.view(actualBatchSize, 1).toType(ScalarType.Float)
-                    val taskLoss = bceLoss.apply(target2D, label2D)
-                    val weight = defaultWeights.getOrElse(taskName, 1.0f).toFloat
-                    if (totalWeightedLoss == null) {
-                      totalWeightedLoss = taskLoss.mul(new Scalar(weight.toDouble))
-                    } else {
-                      totalWeightedLoss = totalWeightedLoss.add(taskLoss.mul(new Scalar(weight.toDouble)))
-                    }
-                    totalWeight += weight
-                  }
-                }
-              }
-
-              if (totalWeightedLoss != null && totalWeight > 0) {
-                val avgLoss = totalWeightedLoss.div(new Scalar(totalWeight.toDouble))
-                avgLoss.backward()
-                optimizer.step()
-                totalLoss += avgLoss.item().toFloat
-              }
-              numBatches += 1
-
-            case omoe: torchrec.models.multi_task.OMoE =>
-              val outputs = omoe.forward(sparseFeats)
-              var totalWeightedLoss: Tensor = null.asInstanceOf[Tensor]
-              var totalWeight = 0.0f
-
-              for (taskName <- taskNames) {
-                outputs.get(taskName).foreach { pred =>
-                  val label = taskLabelsMap.get(taskName)
-                  if (label != null) {
-                    val actualBatchSize = label.size(0).toInt
-                    val target2D = if (pred.dim() == 1) pred.reshape(actualBatchSize, 1) else pred
-                    val label2D = label.view(actualBatchSize, 1).toType(ScalarType.Float)
-                    val taskLoss = bceLoss.apply(target2D, label2D)
-                    val weight = defaultWeights.getOrElse(taskName, 1.0f).toFloat
-                    if (totalWeightedLoss == null) {
-                      totalWeightedLoss = taskLoss.mul(new Scalar(weight.toDouble))
-                    } else {
-                      totalWeightedLoss = totalWeightedLoss.add(taskLoss.mul(new Scalar(weight.toDouble)))
-                    }
-                    totalWeight += weight
-                  }
-                }
-              }
-
-              if (totalWeightedLoss != null && totalWeight > 0) {
-                val avgLoss = totalWeightedLoss.div(new Scalar(totalWeight.toDouble))
-                avgLoss.backward()
-                optimizer.step()
-                totalLoss += avgLoss.item().toFloat
-              }
-              numBatches += 1
-
-            case stm: torchrec.models.multi_task.SingleTaskModel =>
-              val outputs = stm.forward(sparseFeats)
-              var totalWeightedLoss: Tensor = null.asInstanceOf[Tensor]
-              var totalWeight = 0.0f
-
-              for (taskName <- taskNames) {
-                outputs.get(taskName).foreach { pred =>
-                  val label = taskLabelsMap.get(taskName)
-                  if (label != null) {
-                    val actualBatchSize = label.size(0).toInt
-                    val target2D = if (pred.dim() == 1) pred.reshape(actualBatchSize, 1) else pred
-                    val label2D = label.view(actualBatchSize, 1).toType(ScalarType.Float)
-                    val taskLoss = bceLoss.apply(target2D, label2D)
-                    val weight = defaultWeights.getOrElse(taskName, 1.0f).toFloat
-                    if (totalWeightedLoss == null) {
-                      totalWeightedLoss = taskLoss.mul(new Scalar(weight.toDouble))
-                    } else {
-                      totalWeightedLoss = totalWeightedLoss.add(taskLoss.mul(new Scalar(weight.toDouble)))
-                    }
-                    totalWeight += weight
-                  }
-                }
-              }
-
-              if (totalWeightedLoss != null && totalWeight > 0) {
-                val avgLoss = totalWeightedLoss.div(new Scalar(totalWeight.toDouble))
-                avgLoss.backward()
-                optimizer.step()
-                totalLoss += avgLoss.item().toFloat
-              }
-              numBatches += 1
-
-            case metaheac: torchrec.models.multi_task.MetaHeac =>
-              val outputs = metaheac.forwardByName(sparseFeats)
-              var totalWeightedLoss: Tensor = null.asInstanceOf[Tensor]
-              var totalWeight = 0.0f
-
-              for (taskName <- taskNames) {
-                outputs.get(taskName).foreach { pred =>
-                  val label = taskLabelsMap.get(taskName)
-                  if (label != null) {
-                    val actualBatchSize = label.size(0).toInt
-                    val target2D = if (pred.dim() == 1) pred.reshape(actualBatchSize, 1) else pred
-                    val label2D = label.view(actualBatchSize, 1).toType(ScalarType.Float)
-                    val taskLoss = bceLoss.apply(target2D, label2D)
-                    val weight = defaultWeights.getOrElse(taskName, 1.0f).toFloat
-                    if (totalWeightedLoss == null) {
-                      totalWeightedLoss = taskLoss.mul(new Scalar(weight.toDouble))
-                    } else {
-                      totalWeightedLoss = totalWeightedLoss.add(taskLoss.mul(new Scalar(weight.toDouble)))
-                    }
-                    totalWeight += weight
-                  }
-                }
-              }
-
-              if (totalWeightedLoss != null && totalWeight > 0) {
-                val avgLoss = totalWeightedLoss.div(new Scalar(totalWeight.toDouble))
-                avgLoss.backward()
-                optimizer.step()
-                totalLoss += avgLoss.item().toFloat
-              }
-              numBatches += 1
-
-            case _ =>
-            // Unknown model type — skip
+          // Get predictions - handle both Tensor and Map[String, Tensor] returns
+          val outputsAny = model match {
+            case m: MMOE => m.forward(sparseFeats)
+            case m: SharedBottom => m.forward(sparseFeats)
+            case m: PLE => m.forward(sparseFeats)
+            case m: ESMM => m.forward(sparseFeats)
+            case m: AITM => m.forward(sparseFeats)
+            case m: OMoE => m.forward(sparseFeats)
+            case m: SingleTaskModel => m.forward(sparseFeats)
+            case m: MetaHeac => m.forwardByName(sparseFeats)
+            case _ => throw new IllegalArgumentException(s"Unknown model type: ${model.getClass.getName}")
           }
+
+          var totalWeightedLoss: Tensor = null.asInstanceOf[Tensor]
+          var totalWeight = 0.0f
+
+          for (i <- 0 until nTask) {
+            val taskName = taskNames(i)
+            // Extract prediction for this task - handle Tensor and Map types
+            val pred = outputsAny match {
+              case tensor: Tensor => tensor.select(1, i)
+              case map: java.util.Map[String, Tensor] @unchecked => map.get(taskName)
+              case map: Map[String, Tensor] @unchecked => map(taskName)
+            }
+            val label = taskLabelsMap.get(taskName)
+            if (label != null) {
+              val actualBatchSize = label.size(0).toInt
+              val target2D = if (pred.dim() == 1) pred.reshape(actualBatchSize, 1) else pred
+              val label2D = label.view(actualBatchSize, 1).toType(ScalarType.Float)
+              val taskLoss = bceLoss.apply(target2D, label2D)
+              val weight = defaultWeights.getOrElse(taskName, 1.0f).toFloat
+              if (totalWeightedLoss == null) {
+                totalWeightedLoss = taskLoss.mul(new Scalar(weight.toDouble))
+              } else {
+                totalWeightedLoss = totalWeightedLoss.add(taskLoss.mul(new Scalar(weight.toDouble)))
+              }
+              totalWeight += weight
+            }
+          }
+
+          if (totalWeightedLoss != null && totalWeight > 0) {
+            val avgLoss = totalWeightedLoss.div(new Scalar(totalWeight.toDouble))
+            avgLoss.backward()
+            optimizer.step()
+            totalLoss += avgLoss.item().toFloat
+          }
+          numBatches += 1
         }
       }
 
@@ -345,6 +139,7 @@ class MTLTrainer(
 
   def evaluate(dataLoader: DataLoader): Map[String, Float] = {
     model.eval()
+    val nTask = taskNames.size
 
     val taskMetrics = mutable.Map[String, (AUC, LogLoss, Accuracy)]()
     for (name <- taskNames) {
@@ -359,136 +154,36 @@ class MTLTrainer(
 
       if (sparseFeats.isEmpty || taskLabelsMap.isEmpty) { /* skip */ }
       else {
-        model match {
-          case mmoe: MMOE =>
-            val outputs = mmoe.forward(sparseFeats)
-            for (taskName <- taskNames) {
-              outputs.get(taskName).foreach { pred =>
-                val label = taskLabelsMap.get(taskName)
-                if (label != null) {
-                  val labelArr = label.squeeze().to(ScalarType.Float).contiguous().cpu().toFloatArray
-                  val predArr = pred.squeeze().to(ScalarType.Float).contiguous().cpu().toFloatArray
-                  val (auc, logloss, acc) = taskMetrics(taskName)
-                  auc.update(predArr, labelArr)
-                  logloss.update(predArr, labelArr)
-                  acc.update(predArr, labelArr)
-                }
-              }
-            }
+        // Get predictions - handle both Tensor and Map[String, Tensor] returns
+        val outputsAny = model match {
+          case m: MMOE => m.forward(sparseFeats)
+          case m: SharedBottom => m.forward(sparseFeats)
+          case m: PLE => m.forward(sparseFeats)
+          case m: ESMM => m.forward(sparseFeats)
+          case m: AITM => m.forward(sparseFeats)
+          case m: OMoE => m.forward(sparseFeats)
+          case m: SingleTaskModel => m.forward(sparseFeats)
+          case m: MetaHeac => m.forwardByName(sparseFeats)
+          case _ => throw new IllegalArgumentException(s"Unknown model type: ${model.getClass.getName}")
+        }
 
-          case sb: SharedBottom =>
-            val outputs = sb.forward(sparseFeats)
-            for (taskName <- taskNames) {
-              outputs.get(taskName).foreach { pred =>
-                val label = taskLabelsMap.get(taskName)
-                if (label != null) {
-                  val labelArr = label.squeeze().to(ScalarType.Float).contiguous().cpu().toFloatArray
-                  val predArr = pred.squeeze().to(ScalarType.Float).contiguous().cpu().toFloatArray
-                  val (auc, logloss, acc) = taskMetrics(taskName)
-                  auc.update(predArr, labelArr)
-                  logloss.update(predArr, labelArr)
-                  acc.update(predArr, labelArr)
-                }
-              }
-            }
-
-          case ple: torchrec.models.multi_task.PLE =>
-            val outputs = ple.forward(sparseFeats)
-            for (taskName <- taskNames) {
-              outputs.get(taskName).foreach { pred =>
-                val label = taskLabelsMap.get(taskName)
-                if (label != null) {
-                  val labelArr = label.squeeze().to(ScalarType.Float).contiguous().cpu().toFloatArray
-                  val predArr = pred.squeeze().to(ScalarType.Float).contiguous().cpu().toFloatArray
-                  val (auc, logloss, acc) = taskMetrics(taskName)
-                  auc.update(predArr, labelArr)
-                  logloss.update(predArr, labelArr)
-                  acc.update(predArr, labelArr)
-                }
-              }
-            }
-
-          case esmm: ESMM =>
-            val outputs = esmm.forward(sparseFeats)
-            for (taskName <- taskNames) {
-              outputs.get(taskName).foreach { pred =>
-                val label = taskLabelsMap.get(taskName)
-                if (label != null) {
-                  val labelArr = label.squeeze().to(ScalarType.Float).contiguous().cpu().toFloatArray
-                  val predArr = pred.squeeze().to(ScalarType.Float).contiguous().cpu().toFloatArray
-                  val (auc, logloss, acc) = taskMetrics(taskName)
-                  auc.update(predArr, labelArr)
-                  logloss.update(predArr, labelArr)
-                  acc.update(predArr, labelArr)
-                }
-              }
-            }
-
-          case aitm: torchrec.models.multi_task.AITM =>
-            val outputs = aitm.forward(sparseFeats)
-            for (taskName <- taskNames) {
-              outputs.get(taskName).foreach { pred =>
-                val label = taskLabelsMap.get(taskName)
-                if (label != null) {
-                  val labelArr = label.squeeze().to(ScalarType.Float).contiguous().cpu().toFloatArray
-                  val predArr = pred.squeeze().to(ScalarType.Float).contiguous().cpu().toFloatArray
-                  val (auc, logloss, acc) = taskMetrics(taskName)
-                  auc.update(predArr, labelArr)
-                  logloss.update(predArr, labelArr)
-                  acc.update(predArr, labelArr)
-                }
-              }
-            }
-
-          case omoe: torchrec.models.multi_task.OMoE =>
-            val outputs = omoe.forward(sparseFeats)
-            for (taskName <- taskNames) {
-              outputs.get(taskName).foreach { pred =>
-                val label = taskLabelsMap.get(taskName)
-                if (label != null) {
-                  val labelArr = label.squeeze().to(ScalarType.Float).contiguous().cpu().toFloatArray
-                  val predArr = pred.squeeze().to(ScalarType.Float).contiguous().cpu().toFloatArray
-                  val (auc, logloss, acc) = taskMetrics(taskName)
-                  auc.update(predArr, labelArr)
-                  logloss.update(predArr, labelArr)
-                  acc.update(predArr, labelArr)
-                }
-              }
-            }
-
-          case stm: torchrec.models.multi_task.SingleTaskModel =>
-            val outputs = stm.forward(sparseFeats)
-            for (taskName <- taskNames) {
-              outputs.get(taskName).foreach { pred =>
-                val label = taskLabelsMap.get(taskName)
-                if (label != null) {
-                  val labelArr = label.squeeze().to(ScalarType.Float).contiguous().cpu().toFloatArray
-                  val predArr = pred.squeeze().to(ScalarType.Float).contiguous().cpu().toFloatArray
-                  val (auc, logloss, acc) = taskMetrics(taskName)
-                  auc.update(predArr, labelArr)
-                  logloss.update(predArr, labelArr)
-                  acc.update(predArr, labelArr)
-                }
-              }
-            }
-
-          case metaheac: torchrec.models.multi_task.MetaHeac =>
-            val outputs = metaheac.forwardByName(sparseFeats)
-            for (taskName <- taskNames) {
-              outputs.get(taskName).foreach { pred =>
-                val label = taskLabelsMap.get(taskName)
-                if (label != null) {
-                  val labelArr = label.squeeze().to(ScalarType.Float).contiguous().cpu().toFloatArray
-                  val predArr = pred.squeeze().to(ScalarType.Float).contiguous().cpu().toFloatArray
-                  val (auc, logloss, acc) = taskMetrics(taskName)
-                  auc.update(predArr, labelArr)
-                  logloss.update(predArr, labelArr)
-                  acc.update(predArr, labelArr)
-                }
-              }
-            }
-
-          case _ =>
+        for (i <- 0 until nTask) {
+          val taskName = taskNames(i)
+          // Extract prediction for this task - handle Tensor and Map types
+          val pred = outputsAny match {
+            case tensor: Tensor => tensor.select(1, i)
+            case map: java.util.Map[String, Tensor] @unchecked => map.get(taskName)
+            case map: Map[String, Tensor] @unchecked => map(taskName)
+          }
+          val label = taskLabelsMap.get(taskName)
+          if (label != null) {
+            val labelArr = label.squeeze().to(ScalarType.Float).contiguous().cpu().toFloatArray
+            val predArr = pred.squeeze().to(ScalarType.Float).contiguous().cpu().toFloatArray
+            val (auc, logloss, acc) = taskMetrics(taskName)
+            auc.update(predArr, labelArr)
+            logloss.update(predArr, labelArr)
+            acc.update(predArr, labelArr)
+          }
         }
       }
     }

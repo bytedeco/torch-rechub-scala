@@ -53,8 +53,7 @@ class AutoInt(
     }
 
     // Flatten and MLP
-    val flattened = output.flatten( 1l, 1l)
-//    val flattened = output.flatten(start_dim = 1l,end_dim = 1l)
+    val flattened = output.flatten(1, 2)
     val logits = mlp.forward(flattened)
     logits
   }

@@ -58,9 +58,8 @@ class FiBiNet(
     val biOut = bilinear.forward(senetFeatures, reshaped)
 
     // Concat bilinear and original, then MLP
-    val tensorVec = new TensorVector(biOut.size.toLong)
-    biOut.foreach(t => tensorVec.push_back(t))
-    val combined = torch.cat(tensorVec, 1L)
+    val tensorList = biOut.toList
+    val combined = torch.cat(new TensorVector(tensorList.map(_.contiguous()): _*), 1L)
     val logits = mlp.forward(combined)
     logits
   }

@@ -115,7 +115,7 @@ object AliExpressBenchmarks {
       val metrics = trainer.evaluate(testLoader)
       val auc = metrics.getOrElse("AUC", 0.0f)
 
-      println(f"  [PASS] XGBoost AliExpress: AUC=$auc%.4f, Time=${trainingTime%.2f}s")
+      println(f"  [PASS] XGBoost AliExpress: AUC=$auc%.4f, Time=${trainingTime % .2f}s")
 
       BenchmarkResult(
         task = "ranking",
@@ -166,7 +166,7 @@ object AliExpressBenchmarks {
       for (i <- 0 until numSamples) {
         val baseIdx = catTensor.select(0, i).itemSafe().toInt
         for (j <- 0 until seqLen) {
-          val offset = rng.nextInt(100) - 50  // slight variation
+          val offset = rng.nextInt(100) - 50 // slight variation
           tokensArr(i * seqLen + j) = math.max(0, math.min(vocabSize - 1, baseIdx + offset)).toFloat
         }
       }
@@ -240,7 +240,7 @@ object AliExpressBenchmarks {
 
       val recall = trainer.evaluate(trainLoader, topk = 10)
 
-      println(f"  [PASS] MAMBA AliExpress: Recall@10=$recall%.4f, Time=${trainingTime%.2f}s")
+      println(f"  [PASS] MAMBA AliExpress: Recall@10=$recall%.4f, Time=${trainingTime % .2f}s")
 
       BenchmarkResult(
         task = "matching",

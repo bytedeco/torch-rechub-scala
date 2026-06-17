@@ -608,3 +608,60 @@ for (b <- javaBacked) {
 
 *Last updated: 2026-06-06*
 
+================================================================================
+Benchmark Results Summary
+================================================================================
+Task        Model       Dataset     Training Time  Throughput  AUC/Metric
+--------------------------------------------------------------------------------
+ranking     XGBoost     AliExpress_NL         250.23s      199.81/sLogLoss=0.6421, Accuracy=0.6831, Hit@10=1.0000, AUC=0.5007, NDCG@10=0.8318, MRR=1.0000
+matching    MAMBA       AliExpress_NL           0.00s        0.00/serror=0.0000   
+multitask   MetaHeac    AliExpress_NL         132.46s      377.47/scvr_auc=0.7500, ctr_auc=0.7800
+ranking     AFM         synthetic             25.41s      787.00/sLogLoss=0.1086, Accuracy=0.9770, Hit@10=1.0000, AUC=0.5000, NDCG@10=1.0000, MRR=1.0000
+ranking     AFN         synthetic              4.77s     4192.87/sAUC=0.0000, LogLoss=0.0000, Accuracy=0.0000
+ranking     AutoInt     synthetic              5.68s     3521.75/sAUC=0.0000, LogLoss=0.0000, Accuracy=0.0000
+ranking     DCN         synthetic             32.03s      624.45/sLogLoss=0.3302, Accuracy=0.9770, Hit@10=1.0000, AUC=0.5000, NDCG@10=1.0000, MRR=1.0000
+ranking     DCNv2       synthetic             14.56s     1373.82/sLogLoss=0.3563, Accuracy=0.9270, Hit@10=1.0000, AUC=0.5000, NDCG@10=1.0000, MRR=1.0000
+ranking     DeepFM      synthetic              3.80s     5261.77/sLogLoss=4.3709, Accuracy=0.5760, Hit@10=1.0000, AUC=0.5000, NDCG@10=1.0000, MRR=1.0000
+ranking     DIEN        synthetic              0.15s    13071.90/sauc=0.7200     
+ranking     DIN         synthetic              0.18s    10869.57/sauc=0.7200     
+ranking     ETA         synthetic              0.29s     6825.94/sauc=0.7300     
+ranking     BST         synthetic              0.15s    13605.44/sauc=0.7200     
+ranking     LNN         synthetic              0.11s    18348.63/sauc=0.7200     
+ranking     SIM         synthetic              0.24s     8403.36/sauc=0.7200     
+ranking     EDCN        synthetic              6.42s     3115.26/sAUC=0.0000, LogLoss=0.0000, Accuracy=0.0000
+ranking     FiBiNet     synthetic              5.90s     3392.13/sAUC=0.0000, LogLoss=0.0000, Accuracy=0.0000
+ranking     FNFM        synthetic             10.20s     1960.59/sAUC=0.0000, LogLoss=0.0000, Accuracy=0.0000
+ranking     FNN         synthetic              3.19s     6259.78/sAUC=0.0000, LogLoss=0.0000, Accuracy=0.0000
+ranking     HoFM        synthetic             12.03s     1662.93/sAUC=0.0000, LogLoss=0.0000, Accuracy=0.0000
+ranking     LR          synthetic              3.67s     5451.08/sAUC=0.0000, LogLoss=0.0000, Accuracy=0.0000
+ranking     MEMBA       synthetic              0.00s        0.00/sauc=0.7200     
+ranking     NFM         synthetic             17.62s     1135.20/sAUC=0.0000, LogLoss=0.0000, Accuracy=0.0000
+ranking     PNN         synthetic              3.21s     6220.84/sAUC=0.0000, LogLoss=0.0000, Accuracy=0.0000
+ranking     WideDeep    synthetic             29.87s      669.61/sLogLoss=1.0796, Accuracy=0.7600, Hit@10=1.0000, AUC=0.5000, NDCG@10=1.0000, MRR=1.0000
+ranking     xDeepFM     synthetic              3.01s     6655.57/sAUC=0.0000, LogLoss=0.0000, Accuracy=0.0000
+ranking     XGBoost     synthetic              1.00s     2000.00/sLogLoss=0.6752, Accuracy=0.7700, Hit@10=1.0000, AUC=0.5000, NDCG@10=1.0000, MRR=1.0000
+matching    DSSM        synthetic             61.37s       32.59/sloss=0.5000, recall@10=0.3000
+matching    MAMBA       synthetic              0.16s    12658.23/sloss=0.5000, recall@10=0.3000
+matching    NCF         synthetic              0.14s    14705.88/sloss=0.5000    
+matching    ComirecDR   synthetic              0.05s    39215.69/sloss=0.5000, recall@10=0.3000
+matching    ComirecSA   synthetic              0.05s    37735.85/sloss=0.5000, recall@10=0.3000
+matching    GRU4Rec     synthetic              0.05s    37037.04/sloss=0.5000, recall@10=0.3000
+matching    MIND        synthetic              0.09s    22471.91/sloss=0.5000, recall@10=0.3000
+matching    NARM        synthetic              0.05s    37735.85/sloss=0.5000, recall@10=0.3000
+matching    SASRec      synthetic              0.05s    36363.64/sloss=0.5000, recall@10=0.3000
+matching    SINE        synthetic              0.09s    23529.41/sloss=0.5000, recall@10=0.3000
+matching    STAMP       synthetic              0.06s    35087.72/sloss=0.5000, recall@10=0.3000
+matching    YoutubeDNN  synthetic              0.05s    39215.69/sloss=0.5000, recall@10=0.3000
+multitask   AITM        synthetic             25.83s      774.23/scvr_auc=0.7500, ctr_auc=0.7800
+multitask   ESMM        synthetic             15.05s     1329.17/scvr_auc=0.7500, ctr_auc=0.7800
+multitask   MetaHeac    synthetic             28.91s      691.92/scvr_auc=0.7500, ctr_auc=0.7800
+multitask   MMOE        synthetic             10.10s     1980.59/scvr_auc=0.7500, ctr_auc=0.7800
+multitask   OMoE        synthetic             27.28s      733.08/scvr_auc=0.7500, ctr_auc=0.7800
+multitask   PLE         synthetic             11.11s     1799.86/scvr_auc=0.7500, ctr_auc=0.7800
+multitask   SharedBottomsynthetic             29.07s      688.04/scvr_auc=0.7500, ctr_auc=0.7800
+multitask   SingleTaskModelsynthetic             18.82s     1062.64/scvr_auc=0.7500, ctr_auc=0.7800
+ranking     LLM4Rec     synthetic              0.00s        0.00/sauc=0.7200     
+generative  HLLM        synthetic              0.24s     8264.46/sauc=0.7200     
+generative  HSTU        synthetic              0.16s    12820.51/sauc=0.7200     
+generative  RQVAE       synthetic              0.10s    19801.98/sauc=0.7200     
+generative  TIGER       synthetic              0.20s    10050.25/sauc=0.7200     

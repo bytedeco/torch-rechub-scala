@@ -44,7 +44,11 @@ class BST(
   private val encoderMLP = new MLP(embedDim, List(embedDim * 2L), embedDim, "relu", dropout, device = device)
   register_module("encoderMLP", encoderMLP)
 
-  private val layernorm = new LayerNormImpl(new LongVector(embedDim.toLong))
+  private val layernorm = {
+    val vec = new LongVector(1)
+    vec.put(0, embedDim.toLong)
+    new LayerNormImpl(vec)
+  }
   register_module("layernorm", layernorm)
 
   if (device != "cpu") {

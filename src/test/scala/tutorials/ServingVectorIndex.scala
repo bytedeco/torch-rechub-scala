@@ -33,7 +33,7 @@ object ServingVectorIndex {
     println("\n2. Testing VectorIndexer (brute-force)...")
     val vectorBuilder = new VectorIndexerBuilder(IndexMetric.L2)
     val vectorIndexer = vectorBuilder.from_embeddings(embeddings)
-    val queryVec = embeddings.select(0, 0).unsqueeze(0).to(new org.bytedeco.pytorch.Device(device),ScalarType.Float)
+    val queryVec = embeddings.select(0, 0).unsqueeze(0).to(new org.bytedeco.pytorch.Device(device), ScalarType.Float)
     val vectorResult = vectorIndexer.query(queryVec, topK = 5)
     val idsVec = toLongArray(vectorResult._1)
     val distsVec = toFloatArray(vectorResult._2)

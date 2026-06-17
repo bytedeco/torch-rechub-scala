@@ -12,15 +12,15 @@ import scala.collection.mutable
  * Benchmark result case class for DataFrame operations.
  */
 case class DataFrameOpResult(
-  name: String,
-  category: String,
-  passed: Boolean,
-  rowsProcessed: Long,
-  latencyMs: Double,
-  throughputRowsPerSec: Double,
-  memoryMb: Double,
-  error: Option[String] = None
-)
+                              name: String,
+                              category: String,
+                              passed: Boolean,
+                              rowsProcessed: Long,
+                              latencyMs: Double,
+                              throughputRowsPerSec: Double,
+                              memoryMb: Double,
+                              error: Option[String] = None
+                            )
 
 /**
  * Comprehensive DataFrame operations benchmark suite.
