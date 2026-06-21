@@ -69,8 +69,8 @@ class XGBoostModel(
     // 维度对齐
     val featDim = input.size(1).toInt
     val alignedInput = if (featDim < linkFeatDim) {
-      val pad = TorchRec.zeros(batchSize.toLong, linkFeatDim - featDim)
-      pad.to(targetDevice, ScalarType.Float)
+      val pad = torch.zeros(Array(batchSize.toLong, linkFeatDim - featDim),
+        new TensorOptions().device(new DeviceOptional(targetDevice)).dtype(new ScalarTypeOptional(ScalarType.Float)))
       val vec = new TensorVector(2L)
       vec.push_back(input)
       vec.push_back(pad)
@@ -78,7 +78,6 @@ class XGBoostModel(
     } else if (featDim > linkFeatDim) {
       input.narrow(1, 0, linkFeatDim)
     } else input
-    alignedInput.to(targetDevice, ScalarType.Float)
 
     // 树输出求平均
     val treeOutputs = trees.map(_.forward(alignedInput))
@@ -116,16 +115,17 @@ class SoftDecisionTree(
   register_parameter("leaf_values", leafValues)
 
   def forward(x: Tensor): Tensor = {
-    val xDev = x.device()
-    val xFixed = x.to(targetDevice, ScalarType.Float)
+    // Only transfer if not on target device
+    val xOnDev = if (!x.device().equals(targetDevice)) {
+      x.to(targetDevice, ScalarType.Float)
+    } else x
 
     // 路由逻辑（纯全连接+平均，完全稳定输出形状 [batch, 1]）
-    val routeLogits = routeMLP.forward(xFixed)
-    val avgLogit = routeLogits.mean(Array(1l), true,new ScalarTypeOptional()) // 关键：keepdim=true 保证形状 [B, 1]
+    val routeLogits = routeMLP.forward(xOnDev)
+    val avgLogit = routeLogits.mean(Array(1l), true, new ScalarTypeOptional())
 
     // 确保输出形状永远是 [batch, 1]
-    val output = avgLogit.unsqueeze(1).squeeze(2)
-    output.to(targetDevice, ScalarType.Float)
+    avgLogit.unsqueeze(1).squeeze(2)
   }
 }
 

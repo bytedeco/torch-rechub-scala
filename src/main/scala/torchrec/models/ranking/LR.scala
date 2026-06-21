@@ -45,11 +45,12 @@ class LR(
     denseFeats: Map[String, Tensor] = Map.empty
   ): Tensor = {
     // Get embeddings: (batch, num_fields, embed_dim)
-    val embeddings = embeddingLayer.forward(sparseFeats)
+    val embeddings = embeddingLayer.forward3D(sparseFeats)
 
     // Sum over fields and embedding dimension → scalar per batch
-    // Or: sum over fields → (batch, embed_dim), then sum over embed
-    val output = embeddings.sum(1L)  // (batch, embed_dim)
-    output.squeeze(1)  // (batch,)
+    // embeddings: (batch, num_fields, embed_dim)
+    // sum over fields -> (batch, embed_dim), then sum over embed_dim -> (batch,)
+    val summed = embeddings.sum(1L).sum(1L).unsqueeze(1) // (batch,1)
+    summed
   }
 }

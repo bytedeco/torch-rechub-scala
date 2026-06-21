@@ -43,10 +43,20 @@ class InnerProductNetwork(
     if (outputs.isEmpty) {
       val opts = new TensorOptions().dtype(new ScalarTypeOptional(ScalarType.Float))
       torch.zeros(Array(embeddings.size(0), 1), opts).to(embeddings.device(), ScalarType.Float)
+    } else if (outputs.size == 1) {
+      outputs.head
     } else {
-      val vec = new TensorVector(outputs.size.toLong)
-      outputs.foreach(vec.push_back)
-      torch.cat(vec, 1)
+      // Avoid torch.cat over a TensorVector which may fail if any intermediate tensor
+      // lacks device metadata. Allocate result on embeddings.device() and copy columns.
+      val numOut = outputs.size
+      val opts = new TensorOptions().dtype(new ScalarTypeOptional(ScalarType.Float))
+      val result = torch.zeros(Array(embeddings.size(0), numOut.toLong), opts).to(embeddings.device(), ScalarType.Float)
+      var k = 0
+      while (k < numOut) {
+        result.narrow(1, k, 1).copy_(outputs(k))
+        k += 1
+      }
+      result
     }
   }
 }

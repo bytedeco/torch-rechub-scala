@@ -35,7 +35,8 @@ class SINE(
 
   def forward(features: Map[String, Tensor], sequence: Tensor): Tensor = {
     val featEmb = embedding.forward(features)
-    val seqEmb = seqEmbedding.getEmbedding(sequenceFeature.name, sequence)
+    // sequence embedding must use getSequenceEmbedding
+    val seqEmb = seqEmbedding.getSequenceEmbedding(sequenceFeature.name, sequence)
     val interests = interestExtractor.forward(seqEmb.mean(1))
     val combined = featEmb.add(interests)
     tower.forward(combined)

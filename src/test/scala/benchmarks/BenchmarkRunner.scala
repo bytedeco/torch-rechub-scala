@@ -70,9 +70,10 @@ object BenchmarkRunner {
 
     // Run all benchmarks
     val results = mutable.ListBuffer[BenchmarkResult]()
-
+    results += runXDeepFMBenchmark()
+    results += runMAMBABenchmark()
     results += runESMMBenchmark()
-    //    System.gc()
+    System.gc()
     //    results += runMetaHeacBenchmark()
     //
     results += runMMOEBenchmark()
@@ -89,7 +90,6 @@ object BenchmarkRunner {
     results += runSingleTaskModelBenchmark()
     System.gc()
 
-
     results += runLiquidNetWorkBenchmark()
 
     // Ranking benchmarks
@@ -102,25 +102,35 @@ object BenchmarkRunner {
     //    System.gc()
 
     //
+    System.gc()
     results += runAFMBenchmark()
-    results += runAFNBenchmark()
-    results += runAutoIntBenchmark()
+
+    results += runAFNBenchmark() //pass
+    results += runAutoIntBenchmark() //pass
     System.gc()
     results += runDCNBenchmark()
-    results += runDCNv2Benchmark()
-    results += runDeepFMBenchmark()
+    results += runDCNv2Benchmark() //pass
     System.gc()
+    results += runDeepFMBenchmark()
+    results += runEDCNBenchmark()
+
+    System.gc()
+
     //    DIEN DIN ETA BST LNN SIM HLLM HSTU RQVAE TIGER
     results += runDIENBenchmark() //pass
 
-    results += runDINBenchmark()
+    results += runDINBenchmark() //pass
     results += runETABenchmark() //pass
     System.gc()
-    results += runBSTBenchmark()
-    results += runLNNBenchmark()
+    results += runHLLMBenchmark()
+    results += runXDeepFMBenchmark()
+    System.gc()
+    results += runHSTUBenchmark()
+    results += runBSTBenchmark() //pass
+    results += runLNNBenchmark() //pass
 
     results += runSIMBenchmark() //pass
-    results += runEDCNBenchmark()
+
     System.gc()
     results += runFiBiNetBenchmark()
     results += runFNFMBenchmark()
@@ -135,7 +145,7 @@ object BenchmarkRunner {
     System.gc()
 
     results += runWideDeepBenchmark()
-    results += runXDeepFMBenchmark()
+
     results += runXGBoostBenchmark()
     System.gc()
 
@@ -499,16 +509,23 @@ object BenchmarkRunner {
       SparseFeature(s"feat_$i", vocabSize, config.embedDim)
     }.toList
 
+    // Split features for DeepFM (needs deepFeatures and fmFeatures separately)
+    val halfIdx = numSparse / 2
+    val deepFeatures = features.take(halfIdx)
+    val fmFeatures = features.drop(halfIdx)
+
     // Create model
     val model: Module = config.modelName match {
-      case "DeepFM" => new DeepFM(features, config.embedDim, List(64L, 32L), 0.2f, config.device)
+      case "DeepFM" => new DeepFM(deepFeatures, fmFeatures, config.embedDim, List(64L, 32L), 0.2f, config.device)
       case "WideDeep" => new WideDeep(features, config.embedDim, List(64L, 32L), 0.2f, config.device)
       case "DCN" => new DCN(features, config.embedDim, 2, List(64L, 32L), 0.2f, config.device)
       case "DCNv2" => new DCNv2(features, config.embedDim, 2, true, 4, List(64L, 32L), 0.2f, config.device)
-      case "AutoInt" => new AutoInt(features, config.embedDim, 2, 2, List(64L, 32L), 0.2f, config.device)
+      case "AutoInt" => new AutoInt(features, config.embedDim, 2, 2, List(64L, 32L), 0.2f, true, config.device)
       case "FiBiNet" => new FiBiNet(features, config.embedDim, List(64L, 32L), 3, "field_all", 0.2f, config.device)
-      case "AFM" => new AFM(features, config.embedDim, 8, 0.2f, config.device)
-      case "EDCN" => new EDCN(features, config.embedDim, 2, List(64L, 32L), "add", 0.2f, config.device)
+      case "AFM" => new AFM(features, config.embedDim, 64, 0.2f, config.device)
+      case "EDCN" =>
+        val mlpParams = Map("dims" -> List(64L, 32L), "activation" -> "relu", "dropout" -> 0.2f)
+        new EDCN(features, nCrossLayers = 2, mlpParams = mlpParams, bridgeType = "add", useRegulationModule = true, temperature = 0.2f, device = config.device)
       case "DeepFFM" =>
         val fieldNum = features.collect { case f: SparseFeature => 1 }.size
         new DeepFFM(features, 8, fieldNum, List(64L, 32L), 0.2f, config.device)
@@ -535,7 +552,7 @@ object BenchmarkRunner {
       case "LLM4Rec" =>
         runLLM4RecWithSequence(config)
         return BenchmarkResult("ranking", "LLM4Rec", config.datasetName, Map("auc" -> 0.72f), 0.0f, 0.0f, 0.0f)
-      case _ => new DeepFM(features, config.embedDim, List(64L, 32L), 0.2f, config.device)
+      case _ => new DeepFM(features, fmFeatures, config.embedDim, List(64L, 32L), 0.2f, config.device)
     }
 
     // Train
@@ -1756,7 +1773,8 @@ object BenchmarkRunner {
         )
       case "SASRec" =>
         new SASRec(
-          features = features,
+          sequenceFeatures = sequenceFeatures,
+//          features = features,
           embedDim = config.embedDim,
           numHeads = 2,
           numLayers = 2,

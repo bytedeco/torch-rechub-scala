@@ -79,32 +79,32 @@ object LayersBenchmark {
   }
 
   // Helper to create 2D tensor
-  def tensor2d(arr: Array[Array[Float]]): Tensor = {
+  def tensor2d(arr: Array[Array[Float]], device: String = DeviceSupport.backend): Tensor = {
     val flat = arr.flatten
-    tensor(flat, Array(arr.length.toLong, arr(0).length.toLong))
+    tensor(flat, Array(arr.length.toLong, arr(0).length.toLong)).to(new Device(device), ScalarType.Float)
   }
 
   // Helper to create 3D tensor from Array[Array[Array[Float]]]
-  def tensor3d(arr: Array[Array[Array[Float]]]): Tensor = {
+  def tensor3d(arr: Array[Array[Array[Float]]], device: String = DeviceSupport.backend): Tensor = {
     val b = arr.length
     val s = arr(0).length
     val d = arr(0)(0).length
     val flat = arr.flatten.flatten
-    tensor(flat, Array(b.toLong, s.toLong, d.toLong))
+    tensor(flat, Array(b.toLong, s.toLong, d.toLong)).to(new Device(device), ScalarType.Float)
   }
 
 
   // Helper to create 4D tensor from Array[Array[Array[Array[Float]]]]
-  def tensor4d(arr: Array[Array[Array[Array[Float]]]]): Tensor = {
+  def tensor4d(arr: Array[Array[Array[Array[Float]]]], device: String = DeviceSupport.backend): Tensor = {
     val b = arr.length
     val f1 = arr(0).length
     val f2 = arr(0)(0).length
     val d = arr(0)(0)(0).length
     val flat = arr.flatten.flatten.flatten
-    tensor(flat, Array(b.toLong, f1.toLong, f2.toLong, d.toLong))
+    tensor(flat, Array(b.toLong, f1.toLong, f2.toLong, d.toLong)).to(new Device(device), ScalarType.Float)
   }
 
-  def testPredictionLayer(device: String): (Boolean, String) = {
+  def testPredictionLayer(device: String = DeviceSupport.backend): (Boolean, String) = {
     val layer = new PredictionLayer("classification")
     val input = tensor2d(Array.fill(4, 8)(1.0f))
     val out = layer.forward(input)
@@ -112,7 +112,7 @@ object LayersBenchmark {
     (passed, f"output shape: ${out.size(0)}x${out.size(1)}")
   }
 
-  def testLR(device: String): (Boolean, String) = {
+  def testLR(device: String = DeviceSupport.backend): (Boolean, String) = {
     val layer = new LR(8, sigmoid = false, device)
     val input = tensor2d(Array.fill(4, 8)(1.0f))
     val out = layer.forward(input)
@@ -120,7 +120,7 @@ object LayersBenchmark {
     (passed, f"output shape: ${out.size(0)}x${out.size(1)}")
   }
 
-  def testConcatPooling(device: String): (Boolean, String) = {
+  def testConcatPooling(device: String = DeviceSupport.backend): (Boolean, String) = {
     val layer = new ConcatPooling()
     val input = tensor3d(Array.fill(4, 10, 8)(1.0f))
     val out = layer.forward(input, None)
@@ -128,7 +128,7 @@ object LayersBenchmark {
     (passed, f"output shape: ${out.size(0)}x${out.size(1)}x${out.size(2)}")
   }
 
-  def testAveragePooling(device: String): (Boolean, String) = {
+  def testAveragePooling(device: String = DeviceSupport.backend): (Boolean, String) = {
     val layer = new AveragePooling()
     val input = tensor3d(Array.fill(4, 10, 8)(1.0f))
     val out = layer.forward(input, None)
@@ -136,7 +136,7 @@ object LayersBenchmark {
     (passed, f"output shape: ${out.size(0)}x${out.size(1)}")
   }
 
-  def testSumPooling(device: String): (Boolean, String) = {
+  def testSumPooling(device: String = DeviceSupport.backend): (Boolean, String) = {
     val layer = new SumPooling()
     val input = tensor3d(Array.fill(4, 10, 8)(1.0f))
     val out = layer.forward(input, None)
@@ -144,7 +144,7 @@ object LayersBenchmark {
     (passed, f"output shape: ${out.size(0)}x${out.size(1)}")
   }
 
-  def testCrossLayer(device: String): (Boolean, String) = {
+  def testCrossLayer(device: String = DeviceSupport.backend): (Boolean, String) = {
     val layer = new CrossLayer(8, device)
     val x0 = tensor2d(Array.fill(4, 8)(1.0f))
     val xi = tensor2d(Array.fill(4, 8)(0.5f))
@@ -153,7 +153,7 @@ object LayersBenchmark {
     (passed, f"output shape: ${out.size(0)}x${out.size(1)}")
   }
 
-  def testBiLinearInteractionLayer(device: String): (Boolean, String) = {
+  def testBiLinearInteractionLayer(device: String = DeviceSupport.backend): (Boolean, String) = {
     val layer = new BiLinearInteractionLayer(8, 4, "field_interaction", device)
     val input = tensor3d(Array.fill(4, 4, 8)(1.0f))
     val out = layer.forward(input)
@@ -162,7 +162,7 @@ object LayersBenchmark {
     (passed, f"output shape: ${out.size(0)}x${out.size(1)}x${out.size(2)}")
   }
 
-  def testMultiInterestSA(device: String): (Boolean, String) = {
+  def testMultiInterestSA(device: String = DeviceSupport.backend): (Boolean, String) = {
     val layer = new MultiInterestSA(8, 4, None, device)
     val seqEmb = tensor3d(Array.fill(4, 10, 8)(1.0f))
     val mask = tensor3d(Array.fill(4, 10, 1)(1.0f))
@@ -171,7 +171,7 @@ object LayersBenchmark {
     (passed, f"output shape: ${out.size(0)}x${out.size(1)}x${out.size(2)}")
   }
 
-  def testCapsuleNetwork(device: String): (Boolean, String) = {
+  def testCapsuleNetwork(device: String = DeviceSupport.backend): (Boolean, String) = {
     val layer = new CapsuleNetwork(8, 10, 2, 4, 3, false, device)
     val itemEb = tensor3d(Array.fill(4, 10, 8)(1.0f))
     val mask = tensor3d(Array.fill(4, 10, 1)(1.0f))
@@ -180,7 +180,7 @@ object LayersBenchmark {
     (passed, f"output shape: ${out.size(0)}x${out.size(1)}x${out.size(2)}")
   }
 
-  def testFFM(device: String): (Boolean, String) = {
+  def testFFM(device: String = DeviceSupport.backend): (Boolean, String) = {
     val layer = new FFM(4, reduceSum = true, device)
     // Input: (batch=4, num_fields=4, embed_dim=8)
     val input = tensor3d(Array.fill(4, 4, 8)(1.0f))
@@ -190,7 +190,7 @@ object LayersBenchmark {
     (passed, f"output shape: ${out.size(0)}x${out.size(1)}")
   }
 
-  def testCENs(device: String): (Boolean, String) = {
+  def testCENs(device: String = DeviceSupport.backend): (Boolean, String) = {
     val layer = new CEN(8, 6, 2, device)
     // em shape [B=4, numFieldCrosses=6, embedDim=8] 完全匹配Python输入要求
     val input = tensor3d(Array.fill(4, 6, 8)(1.0f))
@@ -201,7 +201,7 @@ object LayersBenchmark {
     (passed, f"output shape: ${out.size(0)}x${out.size(1)} * ${out.size(2)}")
   }
 
-  def testCEN(device: String): (Boolean, String) = {
+  def testCEN(device: String = DeviceSupport.backend): (Boolean, String) = {
     val layer = new CEN(8, 6, 2, device)
     // Input: (batch=4, num_field_crosses=6, embed_dim=8)
     val input = tensor3d(Array.fill(4, 6, 8)(1.0f))
@@ -211,7 +211,7 @@ object LayersBenchmark {
     (passed, f"output shape: ${out.size(0)}x${out.size(1)}")
   }
 
-  def testHSTULayer(device: String): (Boolean, String) = {
+  def testHSTULayer(device: String = DeviceSupport.backend): (Boolean, String) = {
     val layer = new HSTULayer(64, 4, 16, 16, 0.1f, 20, 128, "sqrt", 1.0f, "minutes", device)
     val input = tensor3d(Array.fill(4, 20, 64)(1.0f))
     val out = layer.forward(input, None, None)
@@ -219,7 +219,7 @@ object LayersBenchmark {
     (passed, f"output shape: ${out.size(0)}x${out.size(1)}x${out.size(2)}")
   }
 
-  def testHSTUBlock(device: String): (Boolean, String) = {
+  def testHSTUBlock(device: String = DeviceSupport.backend): (Boolean, String) = {
     val layer = new HSTUBlock(64, 4, 2, 16, 16, 0.1f, 20, 128, "sqrt", 1.0f, "minutes", device)
     val input = tensor3d(Array.fill(4, 20, 64)(1.0f))
     val out = layer.forward(input, None, None)
@@ -227,7 +227,7 @@ object LayersBenchmark {
     (passed, f"output shape: ${out.size(0)}x${out.size(1)}x${out.size(2)}")
   }
 
-  def testInteractingLayer(device: String): (Boolean, String) = {
+  def testInteractingLayer(device: String = DeviceSupport.backend): (Boolean, String) = {
     val layer = new InteractingLayer(8, 2, 0.0f, true, device)
     val input = tensor3d(Array.fill(4, 4, 8)(1.0f))
     val out = layer.forward(input)
@@ -235,7 +235,7 @@ object LayersBenchmark {
     (passed, f"output shape: ${out.size(0)}x${out.size(1)}x${out.size(2)}")
   }
 
-  def testMLP(device: String): (Boolean, String) = {
+  def testMLP(device: String = DeviceSupport.backend): (Boolean, String) = {
     val layer = new MLP(8, List(16L, 8L), 1, "relu", 0.0f, false, false, true, device)
     val input = tensor2d(Array.fill(4, 8)(1.0f))
     val out = layer.forward(input)
@@ -243,7 +243,7 @@ object LayersBenchmark {
     (passed, f"output shape: ${out.size(0)}x${out.size(1)}")
   }
 
-  def testRelativeBucketedTimeAndPositionBias(device: String): (Boolean, String) = {
+  def testRelativeBucketedTimeAndPositionBias(device: String = DeviceSupport.backend): (Boolean, String) = {
     val layer = new RelativeBucketedTimeAndPositionBias(4, 20, 128, "sqrt", 1.0f, "minutes")
     val out = layer.forward(None, 10)
     val passed = out.dim() == 4L && out.size(0) == 1L && out.size(1) == 4L && out.size(2) == 10L && out.size(3) == 10L

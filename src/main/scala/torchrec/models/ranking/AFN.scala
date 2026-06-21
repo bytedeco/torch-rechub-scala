@@ -85,8 +85,8 @@ class AFN(
     sparseFeats: Map[String, Tensor],
     denseFeats: Map[String, Tensor] = Map.empty
   ): Tensor = {
-    // Get embeddings: (batch, num_fields, embed_dim)
-    val embeddings = embeddingLayer.forward(sparseFeats)
+    // Get embeddings: (batch, num_fields, embed_dim) using forward3D
+    val embeddings = embeddingLayer.forward3D(sparseFeats)
     val batchSize = embeddings.size(0).toInt
 
     // LNN: log(1 + |x|) transformation
@@ -96,11 +96,17 @@ class AFN(
     val w = lnnWeight.to(embeddings.device(), ScalarType.Float)
     val b = lnnBias.to(embeddings.device(), ScalarType.Float)
 
-    // Weighted sum over fields: w @ log(x)
-    // w: (lnn_dim, num_fields), log: (batch, num_fields, embed_dim)
-    val wT = w.t()  // (num_fields, lnn_dim)
-    val preAct = torch.bmm(logEmbeddings, wT)  // (batch, embed_dim, lnn_dim)
-    val preActT = preAct.transpose(1, 2)  // (batch, lnn_dim, embed_dim)
+    // LNN computation: W @ log(x)
+    // logEmbeddings: (batch, num_fields, embed_dim) = (B, F, E)
+    // w: (lnn_dim, num_fields) = (L, F)
+    // Transpose logEmbeddings to (batch, embed_dim, num_fields) for matmul
+    val logEmbeddingsT = logEmbeddings.transpose(1, 2)  // (B, E, F)
+    val wT = w.t()  // (num_fields, lnn_dim) = (F, L)
+    // preAct: (batch, embed_dim, lnn_dim) = (B, E, L)
+    // Use matmul to allow broadcasting the shared weight across batch dimension
+    val preAct = torch.matmul(logEmbeddingsT, wT)
+    // preActT: (batch, lnn_dim, embed_dim) = (B, L, E)
+    val preActT = preAct.transpose(1, 2)
 
     // Add bias
     val bBcast = b.unsqueeze(0).expand(batchSize.toLong, lnnDim.toLong, embedDim.toLong)
@@ -116,7 +122,8 @@ class AFN(
     lnnOut = dropoutLayer.forward(lnnOut)
 
     // Flatten: (batch, lnn_dim * embed_dim)
-    val lnnFlat = lnnOut.view(batchSize, lnnOutputDim.toLong)
+    // Use reshape instead of view to avoid non-contiguous tensor errors after transpose
+    val lnnFlat = lnnOut.reshape(batchSize, lnnOutputDim.toLong)
 
     // MLP
     mlp.forward(lnnFlat).squeeze(1)

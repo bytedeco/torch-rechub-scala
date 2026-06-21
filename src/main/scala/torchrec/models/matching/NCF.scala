@@ -52,7 +52,8 @@ class NCF(
   private val totalSparseDim = Features.calcSparseDim(features)
 
   // MLP for NCF part
-  private val mlp = new MLP(totalSparseDim, mlpDims, 64L, "relu", dropout, device = device)
+  // The MLP's output dimension should match the last element of mlpDims
+  private val mlp = new MLP(totalSparseDim, mlpDims, mlpDims.last, "relu", dropout, device = device)
   register_module("mlp", mlp)
 
   // Final fusion layer: GMF output (embedDim) + MLP output (64) = embedDim + 64

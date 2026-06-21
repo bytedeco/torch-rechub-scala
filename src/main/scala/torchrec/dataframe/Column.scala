@@ -194,7 +194,7 @@ object Column {
             case i: Int => i.toFloat
             case d: Double => d.toFloat
             case l: Long => l.toFloat
-            case null | _ => 0.0f
+            case null | _ => Float.NaN
           )
         }
       case DataType.Int32 =>

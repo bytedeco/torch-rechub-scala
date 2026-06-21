@@ -95,7 +95,21 @@ class MLP(
   }
 
   def forward(x: Tensor): Tensor = {
-    sequential.forward(x)
+    try {
+      if (x == null) {
+        throw new IllegalArgumentException("Input tensor cannot be null")
+      }
+      if (x.numel() == 0) {
+        throw new IllegalArgumentException("Input tensor has no elements")
+      }
+      sequential.forward(x)
+    } catch {
+      case e: Exception =>
+        System.err.println(s"[MLP] Forward pass failed: ${e.getMessage}")
+        System.err.println(s"[MLP] Input shape: ${x.sizes().vec().get().mkString(", ")}, dtype: ${x.dtype()}")
+        e.printStackTrace()
+        throw e
+    }
   }
 
   private def createActivation(act: String): Module = {

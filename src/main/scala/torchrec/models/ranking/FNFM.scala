@@ -1,12 +1,12 @@
 package torchrec.models.ranking
 
-import torchrec.basic.features._
-import torchrec.basic.layers._
-import torchrec.Implicits._
+import torchrec.basic.features.*
+import torchrec.basic.layers.*
+import torchrec.Implicits.*
 import torchrec.utils.DeviceSupport
-
-import org.bytedeco.pytorch._
+import org.bytedeco.pytorch.*
 import org.bytedeco.pytorch.global.torch
+import org.bytedeco.pytorch.global.torch.ScalarType
 
 /**
  * Field-aware Neural Factorization Machine (FNFM)
@@ -60,7 +60,7 @@ class FNFM(
     denseFeats: Map[String, Tensor] = Map.empty
   ): Tensor = {
     // Get embeddings: (batch, num_fields, embed_dim)
-    val embeddings = embeddingLayer.forward(sparseFeats)
+    val embeddings = embeddingLayer.forward3D(sparseFeats)
 
     // Compute field-aware interactions: for each pair (i,j) where i<j
     // interaction = sum over k of V_{j,k} * V_{i,k}
@@ -82,9 +82,18 @@ class FNFM(
     }
 
     // Concatenate all pairwise interactions: (batch, num_pairs * embed_dim)
-    val vec = new TensorVector(interactions.size.toLong)
-    interactions.foreach(vec.push_back)
-    val ffmFeatures = torch.cat(vec, 1L)  // (batch, num_pairs * embed_dim)
+    val ffmFeatures = if (interactions.isEmpty) {
+      val opts = new TensorOptions().dtype(new ScalarTypeOptional(ScalarType.Float))
+      torch.zeros(Array(embeddings.size(0).toLong, 1L), opts).to(embeddings.device(), ScalarType.Float)
+    } else {
+      val vec = new TensorVector()
+      val targetDev = interactions.head.device()
+      interactions.foreach { t =>
+        val onDev = if (t.device().equals(targetDev)) t else t.to(targetDev, t.dtype())
+        vec.push_back(onDev)
+      }
+      torch.cat(vec, 1L)
+    }
 
     // MLP
     mlp.forward(ffmFeatures).squeeze(1)

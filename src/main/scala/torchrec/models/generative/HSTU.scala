@@ -239,8 +239,19 @@ class HSTU(
     tokens: Tensor,
     timeDiffs: Tensor
   ): Tensor = {
-    val batchSize = tokens.size(0).toInt
-    val seqLen = tokens.size(1).toInt
+    // Ensure inputs are on the same device as the model to avoid mixed-device ops
+    val dev = new Device(device)
+    val tokensOn = try { tokens.to(dev, ScalarType.Long) } catch { case _: Throwable => tokens }
+    var timeDiffsOn: Option[Tensor] = None
+    if (timeDiffs != null) {
+      try { timeDiffsOn = Some(timeDiffs.to(dev, ScalarType.Float)) } catch { case _: Throwable => timeDiffsOn = Some(timeDiffs) }
+    }
+
+    // Ensure the module parameters and submodules are on the requested device
+    try { this.to(dev, false) } catch { case _: Throwable => () }
+
+    val batchSize = tokensOn.size(0).toInt
+    val seqLen = tokensOn.size(1).toInt
 
     // Validate sequence length
     if (seqLen > maxSeqLen) {
@@ -251,40 +262,47 @@ class HSTU(
     }
 
     // Create padding mask: true for valid tokens
-    val paddingMask = torch.ne(tokens, new Scalar(0L))
+    val paddingMask = torch.ne(tokensOn, new Scalar(0L))
 
-    // Token embeddings
-    var embeddings = tokenEmbedding.forward(tokens.toType(ScalarType.Long))
+    // Token embeddings (ensure indices are long and on model device)
+    var embeddings = tokenEmbedding.forward(tokensOn.toType(ScalarType.Long))
 
     if (scaleInputEmbedding) {
       embeddings = embeddings.mul(new Scalar(math.sqrt(dModel).toFloat))
     }
 
     // Position embeddings: create positions [0, 1, 2, ..., seqLen-1]
+    // Position indices must be created on the model device
     val positions = torch.arange(
       new Scalar(seqLen.toLong),
       new TensorOptions().dtype(new ScalarTypeOptional(ScalarType.Long))
-    ).to(tokens.device(),ScalarType.Long)
+    ).to(dev, ScalarType.Long)
 
-    val posEmb = positionEmbedding.forward(positions.toType(ScalarType.Long))
+    var posEmb = positionEmbedding.forward(positions.toType(ScalarType.Long))
+    // Ensure position embeddings are on same device as token embeddings before adding
+    try { posEmb = posEmb.to(embeddings.device(), posEmb.dtype()) } catch { case _: Throwable => () }
     embeddings = embeddings.add(posEmb.unsqueeze(0))
 
     // Time difference embeddings
     if (useTimeEmbedding) {
-      val effectiveTimeDiffs = if (timeDiffs != null) {
-        timeDiffs
+      val effectiveTimeDiffs = if (timeDiffsOn.isDefined) {
+        timeDiffsOn.get
       } else {
+        // allocate zeros on the model device
         torch.zeros(Array(batchSize.toLong, seqLen.toLong), new TensorOptions().dtype(new ScalarTypeOptional(ScalarType.Long)))
-          .to(tokens.device(),ScalarType.Float)
+          .to(dev, ScalarType.Long)
       }
 
       val timeBuckets = _timeDiffToBucket(effectiveTimeDiffs)
-      val timeEmb = timeEmbedding.forward(timeBuckets)
+      var timeEmb = timeEmbedding.forward(timeBuckets)
+      // Move timeEmb to embeddings device if necessary
+      try { timeEmb = timeEmb.to(embeddings.device(), timeEmb.dtype()) } catch { case _: Throwable => () }
       embeddings = embeddings.add(timeEmb)
     }
 
     // Zero out padded positions to prevent position/time embeddings from leaking through PAD rows
-    val maskExpand = paddingMask.unsqueeze(-1).to(embeddings.dtype())
+    var maskExpand = paddingMask.unsqueeze(-1).to(embeddings.dtype())
+    try { maskExpand = maskExpand.to(embeddings.device(), maskExpand.dtype()) } catch { case _: Throwable => () }
     embeddings = embeddings.mul(maskExpand)
 
     // Apply dropout
@@ -292,7 +310,7 @@ class HSTU(
 
     // HSTU block forward
     var hstuOutput = hstuBlock.forward(embeddings, Some(paddingMask),
-      if (timeDiffs != null) Some(timeDiffs) else None)
+      if (timeDiffsOn.isDefined) Some(timeDiffsOn.get) else None)
 
     // Zero out padded positions in output
     hstuOutput = hstuOutput.mul(paddingMask.unsqueeze(-1).to(hstuOutput.dtype()))

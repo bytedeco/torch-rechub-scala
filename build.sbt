@@ -8,6 +8,11 @@ scalacOptions += "-experimental"
 fork := true
 javaOptions += "--add-modules=jdk.incubator.vector"
 javaOptions += "--add-exports=jdk.incubator.vector/jdk.incubator.vector=ALL-UNNAMED"
+
+// Skip packaging for all configurations to avoid duplicate JAR entries
+Compile / packageBin / skip := true
+Test / packageBin / skip := true
+
 lazy val currentPlatformClassifier = {
   val os = sys.props("os.name").toLowerCase
   val arch = sys.props("os.arch").toLowerCase
@@ -51,7 +56,6 @@ resolvers ++= Seq(
 updateOptions := updateOptions.value.withLatestSnapshots(true)
 resolvers += "aliyunmaven" at "https://maven.aliyun.com/repository/public"
 // Source: https://mvnrepository.com/artifact/com.lihaoyi/requests
-libraryDependencies += "com.lihaoyi" %% "requests" % "0.9.3"
 lazy val root = (project in file("."))
   .settings(
     name := "torch-rechub-scala",
@@ -94,7 +98,73 @@ lazy val root = (project in file("."))
 
     // Disable publishing for now
     publish := {},
-    publishLocal := {}
+    publishLocal := {},
+
+    // Some environments add duplicated resource mappings; keep jar packaging stable.
+    Compile / packageBin / mappings := (Compile / packageBin / mappings).value.distinctBy(_._2),
+    Test / packageBin / mappings := (Test / packageBin / mappings).value.distinctBy(_._2),
+
+    // Additional libraryDependencies for PyTorch JavaCPP
+    libraryDependencies ++= Seq(
+      // PyTorch GPU
+      //  "org.bytedeco" % "pytorch-platform-gpu" % "2.11.0-1.5.14",
+
+      // JavaCPP
+      "org.bytedeco" % "javacpp" % "1.5.14-SNAPSHOT",
+      "org.bytedeco" % "javacpp" % "1.5.14-SNAPSHOT" classifier "linux-x86_64",
+
+      // OpenBLAS
+      "org.bytedeco" % "openblas" % "0.3.32-1.5.14-SNAPSHOT",
+      "org.bytedeco" % "openblas" % "0.3.32-1.5.14-SNAPSHOT" classifier "linux-x86_64",
+
+      // PyTorch
+      "org.bytedeco" % "pytorch" % "2.12.0-1.5.14-SNAPSHOT",
+      "org.bytedeco" % "pytorch" % "2.12.0-1.5.14-SNAPSHOT" classifier "linux-x86_64",
+
+      "org.bytedeco" % "pytorch-platform-gpu" %  "2.12.0-1.5.14-SNAPSHOT" excludeAll(
+        ExclusionRule("org.bytedeco", "cuda-platform"),
+        ExclusionRule("org.bytedeco", "javacpp-platform"),
+        ExclusionRule("org.bytedeco", "openblas-platform"),
+        //      ExclusionRule("org.bytedeco", "pytorch")//,"windows-x86_64" todo do not open ，or cuda not work！！！
+      ),
+      // CUDA
+      "org.bytedeco" % "cuda" % "13.2-9.21-1.5.14-SNAPSHOT",
+      "org.bytedeco" % "cuda" % "13.2-9.21-1.5.14-SNAPSHOT" classifier "linux-x86_64",
+
+      "org.bytedeco" % "cuda-redist" % "13.2-9.21-1.5.14-SNAPSHOT",
+      "org.bytedeco" % "cuda-redist-cublas" % "13.2-9.21-1.5.14-SNAPSHOT",
+      "org.bytedeco" % "cuda-redist-cudnn" % "13.2-9.21-1.5.14-SNAPSHOT",
+      "org.bytedeco" % "cuda-redist-cusolver" % "13.2-9.21-1.5.14-SNAPSHOT",
+      "org.bytedeco" % "cuda-redist-cusparse" % "13.2-9.21-1.5.14-SNAPSHOT",
+      "org.bytedeco" % "cuda-redist-npp" % "13.2-9.21-1.5.14-SNAPSHOT",
+      "org.bytedeco" % "cuda-redist-nccl" % "13.2-9.21-1.5.14-SNAPSHOT",
+      "org.bytedeco" % "cuda-redist-nvcomp" % "13.2-9.21-1.5.14-SNAPSHOT",
+
+      "org.bytedeco" % "cuda-redist" % "13.2-9.21-1.5.14-SNAPSHOT" classifier "linux-x86_64",
+      "org.bytedeco" % "cuda-redist-cublas" % "13.2-9.21-1.5.14-SNAPSHOT" classifier "linux-x86_64",
+      "org.bytedeco" % "cuda-redist-cudnn" % "13.2-9.21-1.5.14-SNAPSHOT" classifier "linux-x86_64",
+      "org.bytedeco" % "cuda-redist-cusolver" % "13.2-9.21-1.5.14-SNAPSHOT" classifier "linux-x86_64",
+      "org.bytedeco" % "cuda-redist-cusparse" % "13.2-9.21-1.5.14-SNAPSHOT" classifier "linux-x86_64",
+      "org.bytedeco" % "cuda-redist-npp" % "13.2-9.21-1.5.14-SNAPSHOT" classifier "linux-x86_64",
+      "org.bytedeco" % "cuda-redist-nccl" % "13.2-9.21-1.5.14-SNAPSHOT" classifier "linux-x86_64",
+      "org.bytedeco" % "cuda-redist-nvcomp" % "13.2-9.21-1.5.14-SNAPSHOT" classifier "linux-x86_64",
+
+
+
+      // OpenCV
+      "org.bytedeco" % "opencv" % "4.13.0-1.5.14-SNAPSHOT",
+      "org.bytedeco" % "opencv" % "4.13.0-1.5.14-SNAPSHOT" classifier "linux-x86_64",
+      //  "org.bytedeco" % "opencv-platform" % "4.13.0-1.5.14-SNAPSHOT",
+
+      // FFmpeg
+      "org.bytedeco" % "ffmpeg" % "8.1-1.5.14-SNAPSHOT",
+      "org.bytedeco" % "ffmpeg" % "8.1-1.5.14-SNAPSHOT" classifier "linux-x86_64",
+      //  "org.bytedeco" % "ffmpeg-platform" % "8.1-1.5.14-SNAPSHOT"
+      // Gson
+      "com.google.code.gson" % "gson" % "2.14.0",
+
+
+    )
   )
 
 // Enable parallel execution
@@ -113,67 +183,6 @@ resolvers ++= Seq(
 )
 updateOptions := updateOptions.value.withLatestSnapshots(true)
 resolvers += "aliyunmaven" at "https://maven.aliyun.com/repository/public"
-
-libraryDependencies ++= Seq(
-  // PyTorch GPU
-  //  "org.bytedeco" % "pytorch-platform-gpu" % "2.11.0-1.5.14",
-
-  // JavaCPP
-  "org.bytedeco" % "javacpp" % "1.5.14-SNAPSHOT",
-  "org.bytedeco" % "javacpp" % "1.5.14-SNAPSHOT" classifier "linux-x86_64",
-
-  // OpenBLAS
-  "org.bytedeco" % "openblas" % "0.3.32-1.5.14-SNAPSHOT",
-  "org.bytedeco" % "openblas" % "0.3.32-1.5.14-SNAPSHOT" classifier "linux-x86_64",
-
-  // PyTorch
-  "org.bytedeco" % "pytorch" % "2.12.0-1.5.14-SNAPSHOT",
-  "org.bytedeco" % "pytorch" % "2.12.0-1.5.14-SNAPSHOT" classifier "linux-x86_64",
-
-  "org.bytedeco" % "pytorch-platform-gpu" %  "2.12.0-1.5.14-SNAPSHOT" excludeAll(
-    ExclusionRule("org.bytedeco", "cuda-platform"),
-    ExclusionRule("org.bytedeco", "javacpp-platform"),
-    ExclusionRule("org.bytedeco", "openblas-platform"),
-    //      ExclusionRule("org.bytedeco", "pytorch")//,"windows-x86_64" todo do not open ，or cuda not work！！！
-  ),
-  // CUDA
-  "org.bytedeco" % "cuda" % "13.2-9.21-1.5.14-SNAPSHOT",
-  "org.bytedeco" % "cuda" % "13.2-9.21-1.5.14-SNAPSHOT" classifier "linux-x86_64",
-
-  "org.bytedeco" % "cuda-redist" % "13.2-9.21-1.5.14-SNAPSHOT",
-  "org.bytedeco" % "cuda-redist-cublas" % "13.2-9.21-1.5.14-SNAPSHOT",
-  "org.bytedeco" % "cuda-redist-cudnn" % "13.2-9.21-1.5.14-SNAPSHOT",
-  "org.bytedeco" % "cuda-redist-cusolver" % "13.2-9.21-1.5.14-SNAPSHOT",
-  "org.bytedeco" % "cuda-redist-cusparse" % "13.2-9.21-1.5.14-SNAPSHOT",
-  "org.bytedeco" % "cuda-redist-npp" % "13.2-9.21-1.5.14-SNAPSHOT",
-  "org.bytedeco" % "cuda-redist-nccl" % "13.2-9.21-1.5.14-SNAPSHOT",
-  "org.bytedeco" % "cuda-redist-nvcomp" % "13.2-9.21-1.5.14-SNAPSHOT",
-
-  "org.bytedeco" % "cuda-redist" % "13.2-9.21-1.5.14-SNAPSHOT" classifier "linux-x86_64",
-  "org.bytedeco" % "cuda-redist-cublas" % "13.2-9.21-1.5.14-SNAPSHOT" classifier "linux-x86_64",
-  "org.bytedeco" % "cuda-redist-cudnn" % "13.2-9.21-1.5.14-SNAPSHOT" classifier "linux-x86_64",
-  "org.bytedeco" % "cuda-redist-cusolver" % "13.2-9.21-1.5.14-SNAPSHOT" classifier "linux-x86_64",
-  "org.bytedeco" % "cuda-redist-cusparse" % "13.2-9.21-1.5.14-SNAPSHOT" classifier "linux-x86_64",
-  "org.bytedeco" % "cuda-redist-npp" % "13.2-9.21-1.5.14-SNAPSHOT" classifier "linux-x86_64",
-  "org.bytedeco" % "cuda-redist-nccl" % "13.2-9.21-1.5.14-SNAPSHOT" classifier "linux-x86_64",
-  "org.bytedeco" % "cuda-redist-nvcomp" % "13.2-9.21-1.5.14-SNAPSHOT" classifier "linux-x86_64",
-
-
-
-  // OpenCV
-  "org.bytedeco" % "opencv" % "4.13.0-1.5.14-SNAPSHOT",
-  "org.bytedeco" % "opencv" % "4.13.0-1.5.14-SNAPSHOT" classifier "linux-x86_64",
-  //  "org.bytedeco" % "opencv-platform" % "4.13.0-1.5.14-SNAPSHOT",
-
-  // FFmpeg
-  "org.bytedeco" % "ffmpeg" % "8.1-1.5.14-SNAPSHOT",
-  "org.bytedeco" % "ffmpeg" % "8.1-1.5.14-SNAPSHOT" classifier "linux-x86_64",
-  //  "org.bytedeco" % "ffmpeg-platform" % "8.1-1.5.14-SNAPSHOT"
-  // Gson
-  "com.google.code.gson" % "gson" % "2.14.0",
-
-
-)
 
 //libraryDependencies ++= Seq(
 //  // JavaCPP
@@ -228,6 +237,6 @@ libraryDependencies ++= Seq(
 //)
 
 // Assembly merge strategy for JavaCPP/PyTorch jars
-assemblyMergeStrategy := {
-  case _ => sbtassembly.MergeStrategy.first
-}
+//assemblyMergeStrategy := {
+//  case _ => sbtassembly.MergeStrategy.first
+//}

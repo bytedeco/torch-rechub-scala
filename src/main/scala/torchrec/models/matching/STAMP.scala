@@ -21,6 +21,9 @@ class STAMP(
   private val embedding = new EmbeddingLayer(features, embedDim, device)
   register_module("embedding", embedding)
 
+  // Determine sequence feature name from provided features (fallback to "seq_feat")
+  private val seqFeatureName: String = features.collect { case f: SequenceFeature => f.name }.headOption.getOrElse("seq_feat")
+
   private val mlp1 = new MLP(embedDim * 2, List(attentionDim), embedDim, "relu", 0f, device = device)
   private val mlp2 = new MLP(embedDim * 2, List(attentionDim), embedDim, "relu", 0f, device = device)
   register_module("mlp1", mlp1)
@@ -31,22 +34,30 @@ class STAMP(
   register_module("output", output)
 
   def forward(sequence: Tensor): Tensor = {
-    val emb = embedding.forward(Map("seq" -> sequence))
+    // Obtain raw per-position sequence embeddings
+    val raw = embedding.forwardSeqRaw(Map(seqFeatureName -> sequence))
+    val emb = if (raw.dim() == 4L) raw.squeeze(1L) else raw
     val seqLen = emb.size(1).toInt
     val last = emb.select(1, seqLen - 1)
     val first = emb.select(1, 0)
 
+    val pooled = emb.mean(1)
     val attn1 = {
-      val vec = new TensorVector(2L)
+      // align devices
+      val dev = last.device()
+      val pooledOnDev = if (pooled.device().equals(dev)) pooled else pooled.to(dev, pooled.dtype())
+      val vec = new TensorVector()
       vec.push_back(last)
-      vec.push_back(emb.mean(1))
-      mlp1.forward(torch.cat(vec, 1))
+      vec.push_back(pooledOnDev)
+      mlp1.forward(torch.cat(vec, 1L))
     }
     val attn2 = {
-      val vec = new TensorVector(2L)
+      val dev = first.device()
+      val pooledOnDev = if (pooled.device().equals(dev)) pooled else pooled.to(dev, pooled.dtype())
+      val vec = new TensorVector()
       vec.push_back(first)
-      vec.push_back(emb.mean(1))
-      mlp2.forward(torch.cat(vec, 1))
+      vec.push_back(pooledOnDev)
+      mlp2.forward(torch.cat(vec, 1L))
     }
 
     val weighted = attn1.mul(last).add(attn2.mul(first))

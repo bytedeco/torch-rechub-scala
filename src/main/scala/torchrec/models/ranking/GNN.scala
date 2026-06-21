@@ -118,52 +118,66 @@ class GraphAttentionLayer(
 ) extends Module {
 
   private val headDim = outFeatures / numHeads
-  private val heads = (0 until numHeads).map { i =>
-    val fc = new LinearImpl(inFeatures, outFeatures)
-    register_module(s"fc_$i", fc)
-    fc
-  }
-  private val dropoutLayer = new DropoutImpl(dropout)
 
-  // Attention mechanism parameters
-  private val a1 = new LinearImpl(inFeatures, 1)
-  private val a2 = new LinearImpl(inFeatures, 1)
-  register_module("a1_attention", a1)
-  register_module("a2_attention", a2)
+  // Each head has its own transformation
+  private val heads = (0 until numHeads).map { i =>
+    val w = new LinearImpl(inFeatures, headDim)
+    register_module(s"head_$i", w)
+    w
+  }
+
+  // Attention parameters for each head
+  private val attention = (0 until numHeads).map { i =>
+    // Attention: projects concatenated [Wh_i || Wh_j] to scalar
+    val a = new LinearImpl(headDim * 2, 1)
+    register_module(s"attn_$i", a)
+    a
+  }
+
+  private val dropoutLayer = new DropoutImpl(dropout)
 
   if (device != "cpu") {
     val dev = new org.bytedeco.pytorch.Device(device)
     heads.foreach(_.to(dev, false))
-    a1.to(dev, false)
-    a2.to(dev, false)
+    attention.foreach(_.to(dev, false))
   }
 
   def forward(input: Tensor, adj: Tensor): Tensor = {
-    val batchSize = input.size(0)
-    val headOutputs = heads.map { fc =>
-      val h = fc.forward(input)  // (numNodes, outFeatures)
-      selfAttention(h, adj)
+    val numNodes = input.size(0)
+
+    // Compute attention for each head
+    val headOutputs = (0 until numHeads).map { i =>
+      // Transform: (numNodes, inFeatures) -> (numNodes, headDim)
+      val h = heads(i).forward(input)
+
+      // For each node i, compute attention with all neighbors j
+      // e_ij = LeakyReLU(a^T [Wh_i || Wh_j])
+      val h_i = h.unsqueeze(1).expand(numNodes, numNodes, headDim)  // (numNodes, numNodes, headDim)
+      val h_j = h.unsqueeze(0).expand(numNodes, numNodes, headDim)  // (numNodes, numNodes, headDim)
+      val h_concat = torch.cat(new TensorVector(h_i, h_j), 2)  // (numNodes, numNodes, headDim*2)
+
+      // Compute attention scores
+      val e = attention(i).forward(h_concat.view(numNodes * numNodes, headDim * 2))
+        .view(numNodes, numNodes)  // (numNodes, numNodes)
+
+      // Mask with adjacency: set non-edges to -inf
+      val negInf = new Scalar(-1e9f).asInstanceOf[Scalar]
+      val masked = torch.where(adj.gt(new Scalar(0.5f)), e, negInf)
+
+      // Softmax over column (neighbors)
+      val alpha = torch.softmax(masked, 1)  // (numNodes, numNodes)
+
+      // Apply attention: sum over neighbors
+      // (numNodes, numNodes) x (numNodes, headDim) -> (numNodes, headDim)
+      val output = torch.matmul(alpha, h)
+
+      output
     }
 
-    // Concatenate heads
-    val concatenated = torch.cat(new TensorVector(headOutputs.map(_.contiguous().view(batchSize, -1)): _*), 1)
+    // Concatenate heads: (numNodes, numHeads * headDim) = (numNodes, outFeatures)
+    val concatenated = torch.cat(new TensorVector(headOutputs.map(_.contiguous()): _*), 1)
+
     dropoutLayer.forward(concatenated)
-  }
-
-  private def selfAttention(embeddings: Tensor, adj: Tensor): Tensor = {
-    val numNodes = embeddings.size(0)
-
-    // Compute attention coefficients
-    val e = a1.forward(embeddings).add(a2.forward(embeddings)).squeeze(2)  // (numNodes,)
-
-    // Masked attention - use adjacency mask with -inf for non-edges
-    val negInf = new Scalar(-1e9f)
-    val negInfTensor = torch.full(Array(numNodes), negInf, new TensorOptions().dtype(new ScalarTypeOptional(ScalarType.Float))).to(embeddings.device(), ScalarType.Float)
-    val attentionScores = torch.where(adj.gt(new Scalar(0.5f)), e, negInfTensor)
-
-    val attentionWeights = torch.softmax(attentionScores, 1)
-
-    torch.matmul(attentionWeights.unsqueeze(1), embeddings).squeeze(1)
   }
 }
 

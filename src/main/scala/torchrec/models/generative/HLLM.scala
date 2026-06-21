@@ -81,7 +81,9 @@ class HLLM(
     opt.p().put(2)
     opt.dim().put(-1)
     opt.eps().put(l2NormEps)
-    torch.normalize(emb.toType(ScalarType.Float), opt)
+    val normalized = torch.normalize(emb.toType(ScalarType.Float), opt)
+    // Move to target device
+    normalized.to(targetDevice, ScalarType.Float)
   }
   register_buffer("item_embeddings", normalizedItemEmbeddings)
 

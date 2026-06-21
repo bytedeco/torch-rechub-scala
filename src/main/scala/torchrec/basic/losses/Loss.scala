@@ -50,7 +50,21 @@ class BCEWithLogitsLoss(reduction: String = "mean") {
   def apply(predictions: Tensor, targets: Tensor): Tensor = {
     val dev = predictions.device()
     val targetsOnDev = if (!targets.device().equals(dev)) targets.to(dev, targets.dtype()) else targets
-    val rawLoss = torch.binary_cross_entropy_with_logits(predictions, targetsOnDev)
+
+    // Be permissive about (batch,) vs (batch,1) shapes — adapt targets/predictions so they match
+    val rawLoss = {
+      val p = predictions
+      val t = targetsOnDev
+      if (p.dim() == 1 && t.dim() == 2 && t.size(1) == 1) {
+        // predictions: (batch,), targets: (batch,1) -> squeeze targets
+        torch.binary_cross_entropy_with_logits(p, t.squeeze(1))
+      } else if (p.dim() == 2 && p.size(1) == 1 && t.dim() == 1) {
+        // predictions: (batch,1), targets: (batch,) -> squeeze predictions
+        torch.binary_cross_entropy_with_logits(p.squeeze(1), t)
+      } else {
+        torch.binary_cross_entropy_with_logits(p, t)
+      }
+    }
     rawLoss match {
       case l if reduction == "sum" => l.sum()
       case l if reduction == "none" => l

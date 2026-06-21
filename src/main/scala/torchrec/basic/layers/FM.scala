@@ -40,16 +40,25 @@ class FM(
 
 /**
  * 2nd-order FM interaction only (no first-order)
+ *
+ * Python原版对照: FM(reduce_sum=False) returns (batch, embed_dim)
+ * This computes: 0.5 * sum_over_fields(v_i)^2 - sum_over_fields(v_i^2)
+ * which gives pairwise interaction vectors of shape (batch, embed_dim)
  */
 class FMInteraction(
   embedDim: Int
 ) extends Module {
 
   def forward(embeddings: Tensor): Tensor = {
+    // embeddings: (batch_size, num_fields, embed_dim)
     val twoScalar = new Scalar(2.0f)
     val halfScalar = new Scalar(0.5f)
+
+    // sum of squared: (batch, embed_dim)
     val squaredSum = torch.pow(embeddings, twoScalar).sum(1)
+    // squared sum: (batch, embed_dim)
     val sumSquared = torch.pow(embeddings.sum(1), twoScalar)
-    sumSquared.sub(squaredSum).mul(halfScalar).sum(1).unsqueeze(1)
+    // interaction: (batch, embed_dim) - NOT summing at the end
+    sumSquared.sub(squaredSum).mul(halfScalar)
   }
 }

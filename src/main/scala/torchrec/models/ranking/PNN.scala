@@ -93,12 +93,12 @@ class PNN(
     sparseFeats: Map[String, Tensor],
     denseFeats: Map[String, Tensor] = Map.empty
   ): Tensor = {
-    // Get embeddings: (batch, num_fields, embed_dim)
-    val embeddings = embeddingLayer.forward(sparseFeats)
+    // Get embeddings: 3D and flat. Use EmbeddingLayer.forward for the flattened
+    // version to ensure device alignment and avoid manual view on possibly
+    // non-contiguous tensors.
+    val embeddings = embeddingLayer.forward3D(sparseFeats)
     val batchSize = embeddings.size(0).toInt
-
-    // Flatten embeddings: (batch, num_fields * embed_dim)
-    val flatEmbed = embeddings.view(batchSize, embedFlatDim.toLong)
+    val flatEmbed = embeddingLayer.forward(sparseFeats) // (batch, num_fields * embed_dim)
 
     // Compute product interactions
     val productFeatures: Tensor = productType match {
@@ -116,7 +116,36 @@ class PNN(
     }
 
     // Concatenate flat embeddings and product features
-    val mlpInput = torch.cat(new TensorVector().push_back(flatEmbed).push_back(productFeatures), 1)
+    // Build mlpInput by allocating on the target device and copying slices to avoid
+    // any torch.cat device-metadata issues.
+    val targetDev = flatEmbed.device()
+    val batch = batchSize.toLong
+    val opts = new TensorOptions().dtype(new ScalarTypeOptional(ScalarType.Float))
+    val mlpInputTmp = torch.zeros(Array(batch, mlpInputDim.toLong), opts).to(targetDev, ScalarType.Float)
+
+    // Copy flat embeddings into the left slice
+    val left = flatEmbed.view(batch, embedFlatDim.toLong)
+    mlpInputTmp.narrow(1L, 0L, embedFlatDim.toLong).copy_(left)
+
+    // Ensure product features live on target device, then copy into the right slice
+    var prodOnDev: Tensor = null.asInstanceOf[Tensor]
+    try {
+      prodOnDev = productFeatures.to(targetDev, productFeatures.dtype())
+    } catch {
+      case _: Throwable => println("[PNN] productFeatures.to(...) failed, falling back to allocation+copy_")
+    }
+    if (prodOnDev == null) {
+      val d0 = productFeatures.size(0)
+      val d1 = if (productFeatures.dim() > 1L) productFeatures.size(1) else 1L
+      val tmp = torch.zeros(Array(d0, d1), opts).to(targetDev, ScalarType.Float)
+      tmp.copy_(productFeatures)
+      prodOnDev = tmp
+    }
+
+    val right = prodOnDev.view(batch, productDim.toLong)
+    mlpInputTmp.narrow(1L, embedFlatDim.toLong, productDim.toLong).copy_(right)
+
+    val mlpInput = mlpInputTmp
 
     // MLP
     mlp.forward(mlpInput).squeeze(1)

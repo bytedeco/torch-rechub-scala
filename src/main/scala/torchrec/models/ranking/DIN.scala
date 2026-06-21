@@ -52,13 +52,14 @@ class DIN(
 
     // Get sequence embeddings and apply attention
     val seqEmbs = sequenceFeatures.map { seqFeat =>
-      val seqEmb = sequenceEmbedding.getEmbedding(seqFeat.name, sequenceFeats(seqFeat.name))
+      val seqEmb = sequenceEmbedding.getSequenceEmbedding(seqFeat.name, sequenceFeats(seqFeat.name))
       // seqEmb: (batch, seq_len, embed_dim)
 
       // Expand target to same sequence length
-      val targetEmb = sequenceEmbedding.getEmbedding(seqFeat.name, targetIdx.toType(ScalarType.Long))
-      // targetEmb: (batch, 1, embed_dim)
-      val targetExpanded = targetEmb.unsqueeze(1).repeat(1, seqEmb.size(1), 1)
+      val targetEmb = sequenceEmbedding.getSequenceEmbedding(seqFeat.name, targetIdx.toType(ScalarType.Long))
+      // Ensure targetEmb is (batch, 1, embed_dim) or (batch, embed_dim) then expand to (batch, seq_len, embed_dim)
+      val targetFlat = if (targetEmb.dim() == 3L) targetEmb.squeeze(1) else if (targetEmb.dim() == 2L) targetEmb else targetEmb.mean(1)
+      val targetExpanded = targetFlat.unsqueeze(1).expand(targetFlat.size(0), seqEmb.size(1), targetFlat.size(1))
 
       // Attention
       val attended = attentionNet.forward(seqEmb, targetExpanded)

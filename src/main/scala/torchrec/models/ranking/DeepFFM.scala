@@ -49,13 +49,16 @@ class DeepFFM(
     sparseFeats: Map[String, Tensor],
     denseFeats: Map[String, Tensor] = Map.empty
   ): Tensor = {
-    // Get embeddings: (batch, num_fields, embed_dim)
+    // Get embeddings:
+    // - For FFM (field-aware) we need a 3D tensor: (batch, num_fields, embed_dim)
+    // - For the deep MLP we use the flattened 2D representation
+    val embeddings3d = embedding.forward3D(sparseFeats)
     val embeddings = embedding.forward(sparseFeats)
 
-    // FFM (2nd-order field-aware interactions)
-    val ffmOut = ffm.forward(embeddings)
+    // FFM (2nd-order field-aware interactions) expects 3D embeddings
+    val ffmOut = ffm.forward(embeddings3d)
 
-    // Deep part
+    // Deep part uses flattened embeddings
     val mlpOut = mlp.forward(embeddings)
 
     // Combine FFM and deep outputs

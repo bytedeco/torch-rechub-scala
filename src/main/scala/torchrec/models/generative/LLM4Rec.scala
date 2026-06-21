@@ -157,7 +157,8 @@ class LLM4RecEncoderLayer(
 
     // Attention
     val nx = norm1.forward(x)
-    val qkv = attnLinear.forward(nx).view(bs, sl, 3, numHeads, headDim).permute(3, 0, 1, 4, 2)
+    // Use reshape instead of view to avoid errors on non-contiguous tensors after linear/permute
+    val qkv = attnLinear.forward(nx).reshape(bs, sl, 3, numHeads, headDim).permute(3, 0, 1, 4, 2)
     val q = qkv.select(4, 0)
     val k = qkv.select(4, 1)
     val v = qkv.select(4, 2)

@@ -42,42 +42,45 @@ class AnovaKernel(
 
     val dev = embeddings.device()
 
-    // Initialize: a_prev starts as all-ones tensor (batch, num_fields+1, embed_dim)
-    val onesOpts = new TensorOptions().dtype(new ScalarTypeOptional(ScalarType.Float))
-    val zerosOpts = new TensorOptions().dtype(new ScalarTypeOptional(ScalarType.Float))
+    // Safer combinatorial implementation: compute sum over all combinations of
+    // `order` fields of the elementwise product of their embeddings.
+    // This avoids in-place ops and autograd versioning issues.
+    // Note: this is more expensive for large numFields/order but is robust.
+    val floatOpts = new TensorOptions().dtype(new ScalarTypeOptional(ScalarType.Float))
+    val zero = torch.zeros(Array(batchSize, eDim), floatOpts).to(dev, ScalarType.Float)
 
-    var aPrev = torch.ones(Array(batchSize, numFields + 1, eDim), onesOpts).to(dev, ScalarType.Float)
-    var a = torch.zeros(Array(batchSize, numFields + 1, eDim), zerosOpts).to(dev, ScalarType.Float)
-
-    // Iterative kernel computation
-    // For each order t:
-    //   a[:, t+1, :] += embeddings[:, t, :] * a_prev[:, t, :]
-    //   a = cumsum(a, dim=1)
-    //   a_prev = a
-    for (t <- 0 until order) {
-      val aPrevSlice = aPrev.narrow(1, t, 1).squeeze(1)
-      val embSlice = embeddings.narrow(1, t, 1).squeeze(1)
-      val product = aPrevSlice.mul(embSlice)
-
-      // Add to a at index t+1
-      val aTarget = a.narrow(1, t + 1, 1).squeeze(1)
-      val updatedASlice = aTarget.add(product)
-      a.narrow(1, t + 1, 1).squeeze(1).copy_(updatedASlice)
-
-      // Cumulative sum along field dimension
-      a = torch.cumsum(a, 1L)
-
-      // Update aPrev for next iteration
-      aPrev = a
+    // Generate all combinations of field indices of size `order`
+    val indices = (0 until numFields.toInt).toArray
+    def combos(arr: Array[Int], k: Int): Seq[Array[Int]] = {
+      if (k == 0) Seq(Array.emptyIntArray)
+      else if (arr.length < k) Seq.empty
+      else {
+        arr.indices.flatMap { i =>
+          combos(arr.slice(i + 1, arr.length), k - 1).map(r => Array(arr(i)) ++ r)
+        }
+      }
     }
 
-    // Output: a[:, order, :] (0-indexed at index order)
-    val result = a.narrow(1, order, 1).squeeze(1)
+    val comb = combos(indices, order)
+    var acc = zero
+    for (c <- comb) {
+      // Start with embedding for first index
+      var prod = embeddings.narrow(1, c(0), 1).squeeze(1)
+      var idx = 1
+      while (idx < c.length) {
+        val t = embeddings.narrow(1, c(idx), 1).squeeze(1)
+        prod = prod.mul(t)
+        idx += 1
+      }
+      acc = acc.add(prod)
+    }
 
+    val result = acc
     if (reduceSum) {
-      val summed = result.sum(1L)
-      summed.squeeze(1)
+      // return (batch, 1)
+      result.sum(1L).unsqueeze(1)
     } else {
+      // return (batch, embed_dim)
       result
     }
   }

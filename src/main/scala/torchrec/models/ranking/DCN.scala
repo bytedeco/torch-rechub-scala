@@ -29,12 +29,12 @@ class DCN(
   private val crossNet = new CrossNetwork(sparseDim, numCrossLayers, device)
   register_module("crossNet", crossNet)
 
-  // Deep network
-  private val mlp = new MLP(sparseDim, mlpDims.map(_.toLong), 1, "relu", dropout, device = device)
+  // Deep network: MLP outputs mlpDims.last dimension, not 1
+  private val mlp = new MLP(sparseDim, mlpDims.map(_.toLong), mlpDims.last, "relu", dropout, device = device)
   register_module("mlp", mlp)
 
-  // Final combination layer
-  private val combo = new LinearImpl(sparseDim + 1, 1)
+  // Final combination layer: cross output (sparseDim) + MLP last hidden dim
+  private val combo = new LinearImpl(sparseDim + mlpDims.last, 1)
   register_module("combo", combo)
 
   if (device != "cpu") {
@@ -46,7 +46,11 @@ class DCN(
     sparseFeats: Map[String, Tensor],
     denseFeats: Map[String, Tensor] = Map.empty
   ): Tensor = {
-    val embeddings = embeddingLayer.forward(sparseFeats)
+    // Use forward3D to get 3D embeddings, then flatten
+    val embeddings3D = embeddingLayer.forward3D(sparseFeats, sequenceFeats = Map.empty)
+    val batchSize = embeddings3D.size(0).toInt
+    // Flatten to (batch, sparseDim)
+    val embeddings = embeddings3D.view(batchSize, sparseDim.toInt)
     val dev = embeddings.device()
 
     // Cross network

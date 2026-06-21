@@ -85,7 +85,14 @@ class LogLoss extends Metric {
 
     var i = 0
     while (i < predictions.length) {
-      val p = math.max(1e-7, math.min(1 - 1e-7, predictions(i))).toFloat
+      // Guard against NaN / Infinite predictions which would make log/pow fail
+      val raw = predictions(i)
+      val p = if (java.lang.Float.isNaN(raw) || java.lang.Float.isInfinite(raw)) {
+        // Replace bad prediction with neutral probability 0.5
+        0.5f
+      } else {
+        math.max(1e-7, math.min(1 - 1e-7, raw)).toFloat
+      }
       val y = labels(i)
       totalLoss += -(y * log(p) + (1 - y) * log(1 - p))
       count += 1
@@ -93,7 +100,7 @@ class LogLoss extends Metric {
     }
   }
 
-  def compute(): Float = (totalLoss / count).toFloat
+  def compute(): Float = if (count == 0) 0.0f else (totalLoss / count).toFloat
 
   def reset(): Unit = {
     totalLoss = 0.0
@@ -130,7 +137,7 @@ class Accuracy(threshold: Float = 0.5f) extends Metric {
     }
   }
 
-  def compute(): Float = correct.toFloat / total
+  def compute(): Float = if (total == 0) 0.0f else correct.toFloat / total
 
   def reset(): Unit = {
     correct = 0

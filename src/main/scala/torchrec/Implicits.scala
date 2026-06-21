@@ -24,12 +24,12 @@ object Implicits {
     torch.rand(sizes, new TensorOptions().dtype(new ScalarTypeOptional(ScalarType.Float)))
 
   def longTensor(data: Array[Long]): Tensor = {
-    val n = data.length
-    val f = data.map(_.toFloat)
-    val flat = torch.tensor(f, new TensorOptions().dtype(new ScalarTypeOptional(ScalarType.Float)))
-    val t = flat.toType(ScalarType.Long)
-    flat.close()
-    t
+    // Create a Long tensor directly to avoid dtype upcasting during batching/stacking.
+    // Constructing as Long prevents intermittent CPUFloatType indices seen in some
+    // embedding/index_select calls when tensors are mixed-typed during stacking.
+    val t = torch.tensor(data, new TensorOptions().dtype(new ScalarTypeOptional(ScalarType.Long)))
+    // Ensure contiguous layout
+    if (t.is_contiguous()) t else t.contiguous()
   }
 
   def floatTensor(data: Array[Float]): Tensor =

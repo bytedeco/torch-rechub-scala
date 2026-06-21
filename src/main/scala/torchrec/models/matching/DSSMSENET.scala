@@ -62,28 +62,38 @@ class DSSMSENET(
   }
 
   // =========================================================================
-  // Embedding layer for all features
+  // Separate embedding layers per tower (so each tower only embeds its own
+  // features and the MLP input dim matches the tower feature dim).
   // =========================================================================
-  private val embedding = new EmbeddingLayer(
-    userFeatures ++ itemFeatures,
+  private val userEmbeddingLayer = new EmbeddingLayer(
+    userFeatures,
     userFeatures.head.embedDim,
     device
   )
-  register_module("embedding", embedding)
+  register_module("user_embedding", userEmbeddingLayer)
+
+  private val itemEmbeddingLayer = new EmbeddingLayer(
+    itemFeatures,
+    itemFeatures.head.embedDim,
+    device
+  )
+  register_module("item_embedding", itemEmbeddingLayer)
+
+  // Feature name sets for routing inputs to the correct tower.
+  private val userFeatureNames: Set[String] = userFeatures.map(_.name).toSet
+  private val itemFeatureNames: Set[String] = itemFeatures.map(_.name).toSet
 
   // =========================================================================
   // SENET layers for adaptive feature weighting
   // =========================================================================
   private val userSenet = {
-    val s = new SENETLayer(reduction = 3, device = device)
-    s.setInputDim(userNumFeatures.toLong)
+    val s = new SENETLayer(numFields = userNumFeatures, reduction = 3, device = device)
     s
   }
   register_module("user_senet", userSenet)
 
   private val itemSenet = {
-    val s = new SENETLayer(reduction = 3, device = device)
-    s.setInputDim(itemNumFeatures.toLong)
+    val s = new SENETLayer(numFields = itemNumFeatures, reduction = 3, device = device)
     s
   }
   register_module("item_senet", itemSenet)
@@ -132,8 +142,9 @@ class DSSMSENET(
     }
 
     // [batch_size, num_features * embed_dim]
-    val inputUser = embedding.forward(
-      sparseFeats = x,
+    val userFeats = x.view.filterKeys(userFeatureNames.contains).toMap
+    val inputUser = userEmbeddingLayer.forward(
+      sparseFeats = userFeats,
       sequenceFeats = Map(),
       squeeze = true
     )
@@ -172,8 +183,9 @@ class DSSMSENET(
     }
 
     // [batch_size, num_features * embed_dim]
-    val inputItem = embedding.forward(
-      sparseFeats = x,
+    val itemFeats = x.view.filterKeys(itemFeatureNames.contains).toMap
+    val inputItem = itemEmbeddingLayer.forward(
+      sparseFeats = itemFeats,
       sequenceFeats = Map(),
       squeeze = true
     )
@@ -203,7 +215,11 @@ class DSSMSENET(
   }
 
   // =========================================================================
-  // Main forward pass
+  // Main forward pass.
+  //
+  // Returns the temperature-scaled cosine similarity as a *logit* (no sigmoid).
+  // Callers that need a probability should apply sigmoid themselves; this keeps
+  // the model compatible with BCEWithLogitsLoss and avoids a double-sigmoid.
   // =========================================================================
   def forward(x: Map[String, Tensor]): Tensor = {
     val userEmbedding = userTower(x)
@@ -215,11 +231,8 @@ class DSSMSENET(
     // calculate cosine score: torch.mul(user_embedding, item_embedding).sum(dim=1)
     val cosSim = torch.mul(userEmbedding, itemEmbedding).sum(1L)
 
-    // Apply temperature: y = y / temperature
-    val scaled = cosSim.div(new Scalar(temperature))
-
-    // Apply sigmoid: torch.sigmoid(y)
-    torch.sigmoid(scaled)
+    // Apply temperature scaling -> logit
+    cosSim.div(new Scalar(temperature))
   }
 }
 

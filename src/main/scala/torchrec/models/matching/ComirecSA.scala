@@ -37,7 +37,9 @@ class ComirecSA(
 
   // MLP
   private val featSparseDim = Features.calcSparseDim(features)
-  private val totalInputDim = featSparseDim + numInterests * embedDim
+  // The flattened input after repeating sparse features per interest and
+  // concatenating with each interest embedding is numInterests * (featSparseDim + embedDim)
+  private val totalInputDim = numInterests * (featSparseDim + embedDim)
 
   private val tower = new MLP(totalInputDim, mlpDims, embedDim, "relu", dropout, device = device)
   register_module("tower", tower)
@@ -47,7 +49,8 @@ class ComirecSA(
     sequenceIndices: Tensor
   ): Tensor = {
     val featEmb = featureEmbedding.forward(features)
-    val seqEmb = sequenceEmbedding.getEmbedding(sequenceFeature.name, sequenceIndices)
+    // sequenceEmbedding is built for sequence features; use getSequenceEmbedding
+    val seqEmb = sequenceEmbedding.getSequenceEmbedding(sequenceFeature.name, sequenceIndices)
 
     // Extract multiple interests
     val interests = interestExtractor.forward(seqEmb)
@@ -55,10 +58,18 @@ class ComirecSA(
 
     // Combine with features
     val featExpanded = featEmb.unsqueeze(1).repeat(1, numInterests, 1)
-    val tensors = List(featExpanded, interests)
-    val featWithInterests = torch.cat(tensors.toSeq.toTensorVector, 2)
+    // Align devices before concatenation to avoid device-less tensor errors
+    val dev = featExpanded.device()
+    val interestsOnDev = if (interests.device().equals(dev)) interests else interests.to(dev, interests.dtype())
+    val vec = new TensorVector()
+    vec.push_back(featExpanded)
+    vec.push_back(interestsOnDev)
+    val featWithInterests = torch.cat(vec, 2L)
     val batchSize = featEmb.size(0)
     val flattened = featWithInterests.view(batchSize, -1)
+    try {
+      System.err.println(s"[DEBUG ComirecSA] featEmb.sizes=${featEmb.sizes().vec().get().mkString(",")}, interests.sizes=${interests.sizes().vec().get().mkString(",")}, featWithInterests.sizes=${featWithInterests.sizes().vec().get().mkString(",")}, flattened.sizes=${flattened.sizes().vec().get().mkString(",")}, totalInputDim=${totalInputDim}")
+    } catch { case _: Throwable => () }
 
     tower.forward(flattened)
   }

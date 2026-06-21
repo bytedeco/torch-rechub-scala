@@ -2,7 +2,7 @@ package torchrec.utils
 
 import org.bytedeco.pytorch.global.torch.*
 import org.bytedeco.pytorch.{Device, Tensor}
-
+import torchrec.Implicits.tensor
 object TensorUtils {
   private val cpuDevice = new Device("cpu")
   private val cudaDevice = new Device("cuda")
@@ -82,5 +82,32 @@ object TensorUtils {
     }
     false
   }
+
+  // Helper to create 2D tensor
+  def tensor2d(arr: Array[Array[Float]]): Tensor = {
+    val flat = arr.flatten
+    tensor(flat, Array(arr.length.toLong, arr(0).length.toLong))
+  }
+
+  // Helper to create 3D tensor from Array[Array[Array[Float]]]
+  def tensor3d(arr: Array[Array[Array[Float]]]): Tensor = {
+    val b = arr.length
+    val s = arr(0).length
+    val d = arr(0)(0).length
+    val flat = arr.flatten.flatten
+    tensor(flat, Array(b.toLong, s.toLong, d.toLong))
+  }
+
+
+  // Helper to create 4D tensor from Array[Array[Array[Array[Float]]]]
+  def tensor4d(arr: Array[Array[Array[Array[Float]]]]): Tensor = {
+    val b = arr.length
+    val f1 = arr(0).length
+    val f2 = arr(0)(0).length
+    val d = arr(0)(0)(0).length
+    val flat = arr.flatten.flatten.flatten
+    tensor(flat, Array(b.toLong, f1.toLong, f2.toLong, d.toLong))
+  }
+
 }
 

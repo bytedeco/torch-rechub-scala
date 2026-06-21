@@ -29,7 +29,7 @@ class MTLTrainer(
   weightDecay: Float = 1e-6f,
   device: String = DeviceSupport.backend,
   numEpochs: Int = 10,
-  earlyStopPatience: Int = 5,
+  earlyStopPatience: Int = 500,
   taskWeights: Option[Map[String, Float]] = None,
   verbose: Boolean = true
 ) {
@@ -55,6 +55,13 @@ class MTLTrainer(
         val batch = iter.next()
         val sparseFeats = batch.sparseFeatures
         val taskLabelsMap = batch.taskLabels
+        // Debug: print the runtime class of taskLabelsMap and a sample
+        if (epoch == 0 && numBatches == 0) {
+          try {
+            System.err.println(s"[MTLTrainer DEBUG] taskLabelsMap runtime class: ${taskLabelsMap.getClass.getName}")
+            if (taskLabelsMap != null) System.err.println(s"[MTLTrainer DEBUG] taskLabelsMap.isEmpty=${taskLabelsMap.isEmpty}")
+          } catch { case _: Throwable => () }
+        }
         if (sparseFeats.isEmpty || taskLabelsMap.isEmpty) { /* skip */ }
         else {
           optimizer.zero_grad()
@@ -88,7 +95,24 @@ class MTLTrainer(
               val actualBatchSize = label.size(0).toInt
               val target2D = if (pred.dim() == 1) pred.reshape(actualBatchSize, 1) else pred
               val label2D = label.view(actualBatchSize, 1).toType(ScalarType.Float)
-              val taskLoss = bceLoss.apply(target2D, label2D)
+               val taskLoss = bceLoss.apply(target2D, label2D)
+               if (epoch == 0 && numBatches == 0) {
+                 try {
+                   System.err.println(s"[MTLTrainer DEBUG] epoch=0 first-batch task=$taskName taskLoss=${taskLoss.item().toDouble}")
+                 } catch { case _: Throwable => () }
+               }
+              // Debugging: if loss is zero, print sample preds/labels and dtypes/shapes
+              try {
+                val lossVal = taskLoss.detach().toType(ScalarType.Float).item().toFloat
+                if (lossVal == 0.0f) {
+                  System.err.println(s"[MTLTrainer DEBUG] task=$taskName loss=0 -> pred dtype=${target2D.dtype()} shape=${target2D.sizes().toString} label dtype=${label2D.dtype()} shape=${label2D.sizes().toString}")
+                  try {
+                    val pArr = target2D.squeeze().to(ScalarType.Float).contiguous().cpu().toFloatArray.take(5)
+                    val lArr = label2D.squeeze().to(ScalarType.Float).contiguous().cpu().toFloatArray.take(5)
+                    System.err.println(s"[MTLTrainer DEBUG] sample preds=${pArr.mkString(",")} sample labels=${lArr.mkString(",")}")
+                  } catch { case _: Throwable => () }
+                }
+              } catch { case _: Throwable => () }
               val weight = defaultWeights.getOrElse(taskName, 1.0f).toFloat
               if (totalWeightedLoss == null) {
                 totalWeightedLoss = taskLoss.mul(new Scalar(weight.toDouble))
@@ -101,6 +125,12 @@ class MTLTrainer(
 
           if (totalWeightedLoss != null && totalWeight > 0) {
             val avgLoss = totalWeightedLoss.div(new Scalar(totalWeight.toDouble))
+            // Debug: print first-batch sample values for epoch 0
+            if (epoch == 0 && numBatches == 0) {
+              try {
+                System.err.println(s"[MTLTrainer DEBUG] first-batch avgLoss=${avgLoss.item().toDouble}")
+              } catch { case _: Throwable => () }
+            }
             avgLoss.backward()
             optimizer.step()
             totalLoss += avgLoss.item().toFloat
@@ -111,7 +141,7 @@ class MTLTrainer(
 
       val avgLoss = if (numBatches > 0) totalLoss / numBatches else 0.0f
 
-      if (verbose) print(s"Epoch $epoch: loss=${f"$avgLoss%.4f"}")
+      if (verbose) print(s"Epoch $epoch: loss=${avgLoss.toString}")
 
       valLoader.foreach { vl =>
         model.eval()
@@ -177,12 +207,19 @@ class MTLTrainer(
           }
           val label = taskLabelsMap.get(taskName)
           if (label != null) {
+            // Convert logits to probabilities for metric computations
             val labelArr = label.squeeze().to(ScalarType.Float).contiguous().cpu().toFloatArray
-            val predArr = pred.squeeze().to(ScalarType.Float).contiguous().cpu().toFloatArray
-            val (auc, logloss, acc) = taskMetrics(taskName)
-            auc.update(predArr, labelArr)
-            logloss.update(predArr, labelArr)
-            acc.update(predArr, labelArr)
+            val predProbTensor = if (pred != null) pred.sigmoid() else pred
+            val predArr = predProbTensor.squeeze().to(ScalarType.Float).contiguous().cpu().toFloatArray
+            // Skip empty arrays (can happen for tiny datasets or unexpected shapes)
+            if (labelArr.length == 0 || predArr.length == 0) {
+              // nothing to update for this batch/task
+            } else {
+              val (auc, logloss, acc) = taskMetrics(taskName)
+              auc.update(predArr, labelArr)
+              logloss.update(predArr, labelArr)
+              acc.update(predArr, labelArr)
+            }
           }
         }
       }

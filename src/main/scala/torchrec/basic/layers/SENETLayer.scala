@@ -10,6 +10,7 @@ import torchrec.utils.DeviceSupport
  * Used in FiBiNet for feature gating
  */
 class SENETLayer(
+  numFields: Int,
   reduction: Int = 3,
   device: String = DeviceSupport.backend
 ) extends Module {

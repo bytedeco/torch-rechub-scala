@@ -5,7 +5,6 @@ import torchrec.basic.metrics._
 import torchrec.data._
 import torchrec.models.ranking._
 import torchrec.models.matching._
-import torchrec.models.multi_task._
 import torchrec.trainers._
 import torchrec.utils.DeviceSupport
 import torchrec.Implicits.tensor
@@ -18,155 +17,483 @@ import scala.util.Random
 import scala.collection.mutable
 
 /**
- * Standalone benchmark runner for AliExpress dataset with specific models.
- * This tests XGBoost (ranking) and MAMBA (matching) on real AliExpress data.
+ * Standalone benchmark runner for AliExpress dataset with various models.
  */
 object AliExpressBenchmarks {
 
   def main(args: Array[String]): Unit = {
-    println("=" * 60)
-    println("AliExpress Benchmark Suite (XGBoost + MAMBA)")
-    println("=" * 60)
+    println("=" * 80)
+    println("AliExpress Benchmark Suite (Multiple Models)")
+    println("=" * 80)
 
-    val results = mutable.ListBuffer[BenchmarkResult]()
+    val results = mutable.ListBuffer[AliExpressResult]()
+    System.gc()
+    // Run all models
 
-    // Test 1: XGBoost on AliExpress (ranking task)
-    results += runXGBoostAliExpress()
+    System.gc()
 
-    // Test 2: MAMBA on AliExpress (matching task)
+    // Skip sequence models - they require real sequence data
+    // results += runDIENAliExpress()
+    // results += runMINDAiExpress()
+    // results += runDINAiExpress()
+    // results += runBSTAliExpress()
+    System.gc()
+    System.gc()
+    results += runDeepFMAliExpress()
+    System.gc()
+    results += runDCNv2AliExpress()
+    System.gc()
+    results += runWideDeepAliExpress()
+    System.gc()
+    results += runAFMAliExpress()
+    System.gc()
+    results += runFiBiNetAliExpress()
+    results += runAutoIntAliExpress()
+    System.gc()
     results += runMAMBAAiExpress()
 
-    // Print summary
+    results += runXGBoostAliExpress()
+    System.gc()
+    results += runxDeepFMAliExpress()
+    System.gc()
     printResults(results.toList)
   }
 
-  def runXGBoostAliExpress(): BenchmarkResult = {
-    println("\n--- XGBoost AliExpress Benchmark ---")
-
-    val benchmarkDevice = DeviceSupport.backend
-
+  def runDeepFMAliExpress(): AliExpressResult = {
+    println("\n--- DeepFM AliExpress Benchmark ---")
+    val device = DeviceSupport.backend
     try {
-      val taskNames = List("click", "conversion")
-      val (trainDS, testDS) = AliExpressDataset.load(
-        datasetPath = "./data/AliExpress_NL",
-        taskNames = taskNames
-      )
-
+      val (trainDS, testDS) = AliExpressDataset.load("./data/AliExpress_NL")
       println(s"  [Data] Train: ${trainDS.size}, Test: ${testDS.size}")
 
-      // Build features from AliExpress categorical columns
-      // AliExpress has 16 categorical features (cat_0..cat_15) and 40 numerical features
-      val allFeatureNames = trainDS.features.keys.toList
-      val sparseNames = allFeatureNames.filter(_.startsWith("cat_")).take(16)
-      val numSparse = sparseNames.size
+      val sparseNames = trainDS.features.keys.filter(k => k.startsWith("cat_") || k.startsWith("categorical")).toList.take(10)
+      val features = sparseNames.map(name => SparseFeature(name, 1000, 8))
 
-      val features = sparseNames.map { name =>
-        SparseFeature(name, 1000, 8)
-      }.toList
+      val clickLabel = trainDS.taskLabels.get("click")
+      val testClickLabel = testDS.taskLabels.get("click")
 
-      // Build label from click task (use first label column for ranking)
-      val clickLabelKey = taskNames.head
-      val trainLabels = trainDS.taskLabels.get(clickLabelKey)
-      val testLabels = testDS.taskLabels.get(clickLabelKey)
+      val trainTensorDS = new torchrec.data.TensorDataset(trainDS.features, Map.empty[String, Tensor], clickLabel)
+      val testTensorDS = new torchrec.data.TensorDataset(testDS.features, Map.empty[String, Tensor], testClickLabel)
 
-      // Create single-task datasets using click labels
-      val trainSingleDS = new torchrec.data.TensorDataset(
-        trainDS.features,
-        Map.empty,
-        trainLabels
-      )
-      val testSingleDS = new torchrec.data.TensorDataset(
-        testDS.features,
-        Map.empty,
-        testLabels
-      )
+      val trainLoader = new DataLoader(trainTensorDS, 256, shuffle = true)
+      val testLoader = new DataLoader(testTensorDS, 256, shuffle = false)
 
-      val trainLoader = new DataLoader(trainSingleDS, 256, shuffle = true)
-      val testLoader = new DataLoader(testSingleDS, 256, shuffle = false)
-
-      // XGBoostModel: use soft decision trees for ranking on AliExpress
-      val linkFeatDim = (numSparse * 8).toLong
-      val model = new XGBoostModel(
-        features = features,
-        numTrees = 16,
-        treeDepth = 4,
+      val halfIdx = features.size / 2
+      val model = new DeepFM(
+        deepFeatures = features.take(halfIdx),
+        fmFeatures = features.drop(halfIdx),
         embedDim = 8,
-        linkFeatDim = linkFeatDim,
-        device = benchmarkDevice
+        mlpDims = List(256L, 128L),
+        dropout = 0.2f,
+        device = device
       )
 
-      println("  [Model] XGBoostModel created with 16 trees, depth 4")
+      println("  [Model] DeepFM created")
 
-      val startTime = System.currentTimeMillis()
-
-      val trainer = new CTRTrainer(
-        model,
-        learningRate = 0.001f,
-        device = benchmarkDevice,
-        numEpochs = 2,
-        verbose = true
-      )
-
+      val trainer = new CTRTrainer(model, 0.001f, device = device, numEpochs = 2, verbose = true)
       trainer.fit(trainLoader, Some(testLoader))
-
-      val trainingTime = (System.currentTimeMillis() - startTime) / 1000.0f
-      val throughput = trainDS.size / trainingTime
 
       val metrics = trainer.evaluate(testLoader)
       val auc = metrics.getOrElse("AUC", 0.0f)
+      println(f"  [PASS] DeepFM: AUC=$auc%.4f")
 
-      println(f"  [PASS] XGBoost AliExpress: AUC=$auc%.4f, Time=${trainingTime % .2f}s")
-
-      BenchmarkResult(
-        task = "ranking",
-        model = "XGBoost",
-        dataset = "AliExpress_NL",
-        metrics = metrics,
-        trainingTime = trainingTime,
-        throughput = throughput,
-        memoryUsed = 0.0f
-      )
+      AliExpressResult("ranking", "DeepFM", metrics)
     } catch {
       case e: Throwable =>
-        println(s"  [FAIL] XGBoost AliExpress: ${e.getMessage}")
+        println(s"  [FAIL] DeepFM: ${e.getMessage}")
         e.printStackTrace()
-        BenchmarkResult("ranking", "XGBoost", "AliExpress_NL", Map("error" -> 0.0f), 0.0f, 0.0f, 0.0f)
+        AliExpressResult("ranking", "DeepFM", Map("error" -> 0.0f))
     }
   }
 
-  def runMAMBAAiExpress(): BenchmarkResult = {
-    println("\n--- MAMBA AliExpress Benchmark ---")
-
-    val benchmarkDevice = DeviceSupport.backend
-
+  def runDCNv2AliExpress(): AliExpressResult = {
+    println("\n--- DCNv2 AliExpress Benchmark ---")
+    val device = DeviceSupport.backend
     try {
-      val taskNames = List("click", "conversion")
-      val (trainDS, testDS) = AliExpressDataset.load(
-        datasetPath = "./data/AliExpress_NL",
-        taskNames = taskNames
-      )
-
+      val (trainDS, testDS) = AliExpressDataset.load("./data/AliExpress_NL")
       println(s"  [Data] Train: ${trainDS.size}, Test: ${testDS.size}")
 
-      // Build matching-style dataset from AliExpress
-      // Treat the AliExpress features as user behavior sequences for matching
+      val sparseNames = trainDS.features.keys.filter(k => k.startsWith("cat_") || k.startsWith("categorical")).toList.take(10)
+      val features = sparseNames.map(name => SparseFeature(name, 1000, 8))
+
+      val clickLabel = trainDS.taskLabels.get("click")
+      val testClickLabel = testDS.taskLabels.get("click")
+
+      val trainTensorDS = new torchrec.data.TensorDataset(trainDS.features, Map.empty[String, Tensor], clickLabel)
+      val testTensorDS = new torchrec.data.TensorDataset(testDS.features, Map.empty[String, Tensor], testClickLabel)
+
+      val trainLoader = new DataLoader(trainTensorDS, 256, shuffle = true)
+      val testLoader = new DataLoader(testTensorDS, 256, shuffle = false)
+
+      val model = new DCNv2(features, embedDim = 8, numCrossLayers = 3, useCrossNetMix = true, lowRank = 4, mlpDims = List(256L, 128L), dropout = 0.2f, device = device)
+
+      println("  [Model] DCNv2 created")
+
+      val trainer = new CTRTrainer(model, 0.001f, device = device, numEpochs = 2, verbose = true)
+      trainer.fit(trainLoader, Some(testLoader))
+
+      val metrics = trainer.evaluate(testLoader)
+      val auc = metrics.getOrElse("AUC", 0.0f)
+      println(f"  [PASS] DCNv2: AUC=$auc%.4f")
+
+      AliExpressResult("ranking", "DCNv2", metrics)
+    } catch {
+      case e: Throwable =>
+        println(s"  [FAIL] DCNv2: ${e.getMessage}")
+        e.printStackTrace()
+        AliExpressResult("ranking", "DCNv2", Map("error" -> 0.0f))
+    }
+  }
+
+  def runWideDeepAliExpress(): AliExpressResult = {
+    println("\n--- WideDeep AliExpress Benchmark ---")
+    val device = DeviceSupport.backend
+    try {
+      val (trainDS, testDS) = AliExpressDataset.load("./data/AliExpress_NL")
+      println(s"  [Data] Train: ${trainDS.size}, Test: ${testDS.size}")
+
+      val sparseNames = trainDS.features.keys.filter(k => k.startsWith("cat_") || k.startsWith("categorical")).toList.take(10)
+      val features = sparseNames.map(name => SparseFeature(name, 1000, 8))
+
+      val clickLabel = trainDS.taskLabels.get("click")
+      val testClickLabel = testDS.taskLabels.get("click")
+
+      val trainTensorDS = new torchrec.data.TensorDataset(trainDS.features, Map.empty[String, Tensor], clickLabel)
+      val testTensorDS = new torchrec.data.TensorDataset(testDS.features, Map.empty[String, Tensor], testClickLabel)
+
+      val trainLoader = new DataLoader(trainTensorDS, 256, shuffle = true)
+      val testLoader = new DataLoader(testTensorDS, 256, shuffle = false)
+
+      val model = new WideDeep(features, embedDim = 8, mlpDims = List(256L, 128L), dropout = 0.2f, device = device)
+
+      println("  [Model] WideDeep created")
+
+      val trainer = new CTRTrainer(model, 0.001f, device = device, numEpochs = 2, verbose = true)
+      trainer.fit(trainLoader, Some(testLoader))
+
+      val metrics = trainer.evaluate(testLoader)
+      val auc = metrics.getOrElse("AUC", 0.0f)
+      println(f"  [PASS] WideDeep: AUC=$auc%.4f")
+
+      AliExpressResult("ranking", "WideDeep", metrics)
+    } catch {
+      case e: Throwable =>
+        println(s"  [FAIL] WideDeep: ${e.getMessage}")
+        e.printStackTrace()
+        AliExpressResult("ranking", "WideDeep", Map("error" -> 0.0f))
+    }
+  }
+
+  def runAFMAliExpress(): AliExpressResult = {
+    println("\n--- AFM AliExpress Benchmark ---")
+    val device = DeviceSupport.backend
+    try {
+      val (trainDS, testDS) = AliExpressDataset.load("./data/AliExpress_NL")
+      println(s"  [Data] Train: ${trainDS.size}, Test: ${testDS.size}")
+
+      val sparseNames = trainDS.features.keys.filter(k => k.startsWith("cat_") || k.startsWith("categorical")).toList.take(10)
+      val features = sparseNames.map(name => SparseFeature(name, 1000, 8))
+
+      val clickLabel = trainDS.taskLabels.get("click")
+      val testClickLabel = testDS.taskLabels.get("click")
+
+      val trainTensorDS = new torchrec.data.TensorDataset(trainDS.features, Map.empty[String, Tensor], clickLabel)
+      val testTensorDS = new torchrec.data.TensorDataset(testDS.features, Map.empty[String, Tensor], testClickLabel)
+
+      val trainLoader = new DataLoader(trainTensorDS, 256, shuffle = true)
+      val testLoader = new DataLoader(testTensorDS, 256, shuffle = false)
+
+      val model = new AFM(features, embedDim = 8, attentionDim = 64, dropout = 0.2f, device = device)
+
+      println("  [Model] AFM created")
+
+      val trainer = new CTRTrainer(model, 0.001f, device = device, numEpochs = 2, verbose = true)
+      trainer.fit(trainLoader, Some(testLoader))
+
+      val metrics = trainer.evaluate(testLoader)
+      val auc = metrics.getOrElse("AUC", 0.0f)
+      println(f"  [PASS] AFM: AUC=$auc%.4f")
+
+      AliExpressResult("ranking", "AFM", metrics)
+    } catch {
+      case e: Throwable =>
+        println(s"  [FAIL] AFM: ${e.getMessage}")
+        e.printStackTrace()
+        AliExpressResult("ranking", "AFM", Map("error" -> 0.0f))
+    }
+  }
+
+  def runFiBiNetAliExpress(): AliExpressResult = {
+    println("\n--- FiBiNet AliExpress Benchmark ---")
+    val device = DeviceSupport.backend
+    try {
+      val (trainDS, testDS) = AliExpressDataset.load("./data/AliExpress_NL")
+      println(s"  [Data] Train: ${trainDS.size}, Test: ${testDS.size}")
+
+      val sparseNames = trainDS.features.keys.filter(k => k.startsWith("cat_") || k.startsWith("categorical")).toList.take(10)
+      val features = sparseNames.map(name => SparseFeature(name, 1000, 8))
+
+      val clickLabel = trainDS.taskLabels.get("click")
+      val testClickLabel = testDS.taskLabels.get("click")
+
+      val trainTensorDS = new torchrec.data.TensorDataset(trainDS.features, Map.empty[String, Tensor], clickLabel)
+      val testTensorDS = new torchrec.data.TensorDataset(testDS.features, Map.empty[String, Tensor], testClickLabel)
+
+      val trainLoader = new DataLoader(trainTensorDS, 256, shuffle = true)
+      val testLoader = new DataLoader(testTensorDS, 256, shuffle = false)
+
+      val model = new FiBiNet(features, embedDim = 8, mlpDims = List(256L, 128L), reduction = 3, bilinearType = "field_all", dropout = 0.2f, device = device)
+
+      println("  [Model] FiBiNet created")
+
+      val trainer = new CTRTrainer(model, 0.001f, device = device, numEpochs = 2, verbose = true)
+      trainer.fit(trainLoader, Some(testLoader))
+
+      val metrics = trainer.evaluate(testLoader)
+      val auc = metrics.getOrElse("AUC", 0.0f)
+      println(f"  [PASS] FiBiNet: AUC=$auc%.4f")
+
+      AliExpressResult("ranking", "FiBiNet", metrics)
+    } catch {
+      case e: Throwable =>
+        println(s"  [FAIL] FiBiNet: ${e.getMessage}")
+        e.printStackTrace()
+        AliExpressResult("ranking", "FiBiNet", Map("error" -> 0.0f))
+    }
+  }
+
+  def runAutoIntAliExpress(): AliExpressResult = {
+    println("\n--- AutoInt AliExpress Benchmark ---")
+    val device = DeviceSupport.backend
+    try {
+      val (trainDS, testDS) = AliExpressDataset.load("./data/AliExpress_NL")
+      println(s"  [Data] Train: ${trainDS.size}, Test: ${testDS.size}")
+
+      val sparseNames = trainDS.features.keys.filter(k => k.startsWith("cat_") || k.startsWith("categorical")).toList.take(10)
+      val features = sparseNames.map(name => SparseFeature(name, 1000, 8))
+
+      val clickLabel = trainDS.taskLabels.get("click")
+      val testClickLabel = testDS.taskLabels.get("click")
+
+      val trainTensorDS = new torchrec.data.TensorDataset(trainDS.features, Map.empty[String, Tensor], clickLabel)
+      val testTensorDS = new torchrec.data.TensorDataset(testDS.features, Map.empty[String, Tensor], testClickLabel)
+
+      val trainLoader = new DataLoader(trainTensorDS, 256, shuffle = true)
+      val testLoader = new DataLoader(testTensorDS, 256, shuffle = false)
+
+      val model = new AutoInt(features, embedDim = 8, numAttnHeads = 4, numLayers = 2, mlpDims = List(128L, 64L), dropout = 0.2f, useMlp = true, device = device)
+
+      println("  [Model] AutoInt created")
+
+      val trainer = new CTRTrainer(model, 0.001f, device = device, numEpochs = 2, verbose = true)
+      trainer.fit(trainLoader, Some(testLoader))
+
+      val metrics = trainer.evaluate(testLoader)
+      val auc = metrics.getOrElse("AUC", 0.0f)
+      println(f"  [PASS] AutoInt: AUC=$auc%.4f")
+
+      AliExpressResult("ranking", "AutoInt", metrics)
+    } catch {
+      case e: Throwable =>
+        println(s"  [FAIL] AutoInt: ${e.getMessage}")
+        e.printStackTrace()
+        AliExpressResult("ranking", "AutoInt", Map("error" -> 0.0f))
+    }
+  }
+
+  def runBSTAliExpress(): AliExpressResult = {
+    println("\n--- BST AliExpress Benchmark ---")
+    val device = DeviceSupport.backend
+    try {
+      val (trainDS, testDS) = AliExpressDataset.load("./data/AliExpress_NL")
+      println(s"  [Data] Train: ${trainDS.size}, Test: ${testDS.size}")
+
+      // Use actual feature names from the dataset
+      val catNames = trainDS.features.keys.filter(k => k.startsWith("cat_") || k.startsWith("categorical")).toList
+      val seqFeatName = catNames.head  // Use first available feature
+      val sparseNames = catNames.filterNot(_ == seqFeatName).take(5)
+      val seqFeature = SequenceFeature(seqFeatName, 1000, 8, maxLen = 10)
+
+      val clickLabel = trainDS.taskLabels.get("click")
+      val testClickLabel = testDS.taskLabels.get("click")
+
+      val trainTensorDS = new torchrec.data.TensorDataset(trainDS.features, Map.empty[String, Tensor], clickLabel)
+      val testTensorDS = new torchrec.data.TensorDataset(testDS.features, Map.empty[String, Tensor], testClickLabel)
+
+      val trainLoader = new DataLoader(trainTensorDS, 256, shuffle = true)
+      val testLoader = new DataLoader(testTensorDS, 256, shuffle = false)
+
+      val model = new BST(sparseNames.map(n => SparseFeature(n, 1000, 8)).toList, List(seqFeature), List(seqFeature), embedDim = 8, numHeads = 8, numLayers = 2, maxSeqLen = 10, mlpDims = List(128L, 64L), dropout = 0.2f, device = device)
+
+      println("  [Model] BST created")
+
+      val trainer = new CTRTrainer(model, 0.001f, device = device, numEpochs = 2, verbose = true)
+      trainer.fit(trainLoader, Some(testLoader))
+
+      val metrics = trainer.evaluate(testLoader)
+      val auc = metrics.getOrElse("AUC", 0.0f)
+      println(f"  [PASS] BST: AUC=$auc%.4f")
+
+      AliExpressResult("ranking", "BST", metrics)
+    } catch {
+      case e: Throwable =>
+        println(s"  [FAIL] BST: ${e.getMessage}")
+        e.printStackTrace()
+        AliExpressResult("ranking", "BST", Map("error" -> 0.0f))
+    }
+  }
+
+  def runXGBoostAliExpress(): AliExpressResult = {
+    println("\n--- XGBoost AliExpress Benchmark ---")
+    val device = DeviceSupport.backend
+    try {
+      val (trainDS, testDS) = AliExpressDataset.load("./data/AliExpress_NL")
+      println(s"  [Data] Train: ${trainDS.size}, Test: ${testDS.size}")
+
+      val sparseNames = trainDS.features.keys.filter(k => k.startsWith("cat_") || k.startsWith("categorical")).toList.take(10)
+      val features = sparseNames.map(name => SparseFeature(name, 1000, 8))
+
+      val clickLabel = trainDS.taskLabels.get("click")
+      val testClickLabel = testDS.taskLabels.get("click")
+
+      val trainTensorDS = new torchrec.data.TensorDataset(trainDS.features, Map.empty[String, Tensor], clickLabel)
+      val testTensorDS = new torchrec.data.TensorDataset(testDS.features, Map.empty[String, Tensor], testClickLabel)
+
+      val trainLoader = new DataLoader(trainTensorDS, 256, shuffle = true)
+      val testLoader = new DataLoader(testTensorDS, 256, shuffle = false)
+
+      val linkFeatDim = (sparseNames.size * 8).toLong
+      val model = new XGBoostModel(features, numTrees = 16, treeDepth = 4, embedDim = 8, linkFeatDim = linkFeatDim, device = device)
+
+      println("  [Model] XGBoost created")
+
+      val trainer = new CTRTrainer(model, 0.001f, device = device, numEpochs = 2, verbose = true)
+      trainer.fit(trainLoader, Some(testLoader))
+
+      val metrics = trainer.evaluate(testLoader)
+      val auc = metrics.getOrElse("AUC", 0.0f)
+      println(f"  [PASS] XGBoost: AUC=$auc%.4f")
+
+      AliExpressResult("ranking", "XGBoost", metrics)
+    } catch {
+      case e: Throwable =>
+        println(s"  [FAIL] XGBoost: ${e.getMessage}")
+        e.printStackTrace()
+        AliExpressResult("ranking", "XGBoost", Map("error" -> 0.0f))
+    }
+  }
+
+  def runxDeepFMAliExpress(): AliExpressResult = {
+    println("\n--- xDeepFM AliExpress Benchmark ---")
+    val device = DeviceSupport.backend
+    try {
+      val (trainDS, testDS) = AliExpressDataset.load("./data/AliExpress_NL")
+      println(s"  [Data] Train: ${trainDS.size}, Test: ${testDS.size}")
+
+      val sparseNames = trainDS.features.keys.filter(k => k.startsWith("cat_") || k.startsWith("categorical")).toList.take(10)
+      val features = sparseNames.map(name => SparseFeature(name, 1000, 8))
+
+      val clickLabel = trainDS.taskLabels.get("click")
+      val testClickLabel = testDS.taskLabels.get("click")
+
+      val trainTensorDS = new torchrec.data.TensorDataset(trainDS.features, Map.empty[String, Tensor], clickLabel)
+      val testTensorDS = new torchrec.data.TensorDataset(testDS.features, Map.empty[String, Tensor], testClickLabel)
+
+      val trainLoader = new DataLoader(trainTensorDS, 256, shuffle = true)
+      val testLoader = new DataLoader(testTensorDS, 256, shuffle = false)
+
+      val model = new xDeepFM(features, embedDim = 8, crossLayerSizes = List(64, 32), mlpDims = List(256L, 128L), splitHalf = true, dropout = 0.2f, device = device)
+
+      println("  [Model] xDeepFM created")
+
+      val trainer = new CTRTrainer(model, 0.001f, device = device, numEpochs = 2, verbose = true)
+      trainer.fit(trainLoader, Some(testLoader))
+
+      val metrics = trainer.evaluate(testLoader)
+      val auc = metrics.getOrElse("AUC", 0.0f)
+      println(f"  [PASS] xDeepFM: AUC=$auc%.4f")
+
+      AliExpressResult("ranking", "xDeepFM", metrics)
+    } catch {
+      case e: Throwable =>
+        println(s"  [FAIL] xDeepFM: ${e.getMessage}")
+        e.printStackTrace()
+        AliExpressResult("ranking", "xDeepFM", Map("error" -> 0.0f))
+    }
+  }
+
+  def runDINAiExpress(): AliExpressResult = {
+    println("\n--- DIN AliExpress Benchmark ---")
+    val device = DeviceSupport.backend
+    try {
+      val (trainDS, testDS) = AliExpressDataset.load("./data/AliExpress_NL")
+      println(s"  [Data] Train: ${trainDS.size}, Test: ${testDS.size}")
+
+      // Use actual feature names from the dataset
+      val catNames = trainDS.features.keys.filter(k => k.startsWith("cat_") || k.startsWith("categorical")).toList
+      val seqFeatName = catNames.head  // Use first available feature
+      val sparseNames = catNames.filterNot(_ == seqFeatName).take(5)
+      val seqFeature = SequenceFeature(seqFeatName, 1000, 8, maxLen = 10)
+
+      val clickLabel = trainDS.taskLabels.get("click")
+      val testClickLabel = testDS.taskLabels.get("click")
+
+      val trainTensorDS = new torchrec.data.TensorDataset(trainDS.features, Map.empty[String, Tensor], clickLabel)
+      val testTensorDS = new torchrec.data.TensorDataset(testDS.features, Map.empty[String, Tensor], testClickLabel)
+
+      val trainLoader = new DataLoader(trainTensorDS, 256, shuffle = true)
+      val testLoader = new DataLoader(testTensorDS, 256, shuffle = false)
+
+      val model = new DIN(
+        features = sparseNames.map(n => SparseFeature(n, 1000, 8)).toList,
+        sequenceFeatures = List(seqFeature),
+        embedDim = 8,
+        mlpDims = List(128L, 64L),
+        dropout = 0.2f,
+        attentionUnits = 64,
+        device = device
+      )
+
+      println("  [Model] DIN created")
+
+      val trainer = new CTRTrainer(model, 0.001f, device = device, numEpochs = 2, verbose = true)
+      trainer.fit(trainLoader, Some(testLoader))
+
+      val metrics = trainer.evaluate(testLoader)
+      val auc = metrics.getOrElse("AUC", 0.0f)
+      println(f"  [PASS] DIN: AUC=$auc%.4f")
+
+      AliExpressResult("ranking", "DIN", metrics)
+    } catch {
+      case e: Throwable =>
+        println(s"  [FAIL] DIN: ${e.getMessage}")
+        e.printStackTrace()
+        AliExpressResult("ranking", "DIN", Map("error" -> 0.0f))
+    }
+  }
+
+  def runMAMBAAiExpress(): AliExpressResult = {
+    println("\n--- MAMBA AliExpress Benchmark ---")
+    val device = DeviceSupport.backend
+    try {
+      val (trainDS, testDS) = AliExpressDataset.load("./data/AliExpress_NL")
+      println(s"  [Data] Train: ${trainDS.size}, Test: ${testDS.size}")
+
       val numSamples = trainDS.size.toInt
       val seqLen = 10
       val vocabSize = 1000L
-
       val rng = new Random(42)
 
-      // Use categorical features to build sequence tokens
-      // Sample from cat_0 to create user behavior sequences
-      val catFeatName = "cat_0"
-      val catTensor = trainDS.features(catFeatName)
+      // Use actual feature names from the dataset
+      val catNames = trainDS.features.keys.filter(k => k.startsWith("cat_") || k.startsWith("categorical")).toList
+      val seqFeatName = catNames.head  // Use first available feature
+      val catTensor = trainDS.features(seqFeatName)
 
-      // Build sequences: for each sample, take a sliding window of indices
       val tokensArr = Array.ofDim[Float](numSamples * seqLen)
       for (i <- 0 until numSamples) {
         val baseIdx = catTensor.select(0, i).itemSafe().toInt
         for (j <- 0 until seqLen) {
-          val offset = rng.nextInt(100) - 50 // slight variation
+          val offset = rng.nextInt(100) - 50
           tokensArr(i * seqLen + j) = math.max(0, math.min(vocabSize - 1, baseIdx + offset)).toFloat
         }
       }
@@ -176,8 +503,7 @@ object AliExpressBenchmarks {
       val positionsFlat = Array.fill(numSamples)(positionsArr).flatten
       val positionsTensor = tensor(positionsFlat, Array(numSamples.toLong, seqLen.toLong)).toType(ScalarType.Long)
 
-      // Build matching labels from click labels
-      val clickLabelKey = taskNames.head
+      val clickLabelKey = "click"
       val clickLabelsRaw = trainDS.taskLabels.get(clickLabelKey)
       val clickLabelsArr = if (clickLabelsRaw.nonEmpty) {
         val raw = clickLabelsRaw.get
@@ -187,17 +513,11 @@ object AliExpressBenchmarks {
       }
       val labelsTensor = tensor(clickLabelsArr, Array(numSamples.toLong))
 
-      // Build user and item features for matching from other categorical columns
-      val catNames = trainDS.features.keys.filter(_.startsWith("cat_")).toList
-      val userCatNames = catNames.filterNot(_ == catFeatName).take(4)
-      val itemCatNames = catNames.filterNot(n => userCatNames.contains(n) || n == catFeatName).take(4)
+      val userCatNames = catNames.filterNot(_ == seqFeatName).take(4)
+      val itemCatNames = catNames.filterNot(n => userCatNames.contains(n) || n == seqFeatName).take(4)
 
-      val userFeatureTensors = userCatNames.map { name =>
-        name -> trainDS.features(name)
-      }.toMap
-      val itemFeatureTensors = itemCatNames.map { name =>
-        name -> trainDS.features(name)
-      }.toMap
+      val userFeatureTensors = userCatNames.map(name => name -> trainDS.features(name)).toMap
+      val itemFeatureTensors = itemCatNames.map(name => name -> trainDS.features(name)).toMap
 
       val matchingDS = new torchrec.data.MatchingDataset(
         userFeatures = userFeatureTensors,
@@ -209,68 +529,213 @@ object AliExpressBenchmarks {
 
       val trainLoader = new DataLoader(matchingDS, 128, shuffle = true)
 
-      // MAMBA for matching with AliExpress sequence data
       val model = new MAMBA(
         vocabSize = vocabSize,
-        embedDim = 64,
+        embedDim = 32,
         dState = 8,
         numLayers = 2,
         maxSeqLen = seqLen,
         mlpDims = List(64L, 32L),
         dropout = 0.1f,
-        device = benchmarkDevice
+        device = device
       )
 
-      println("  [Model] MAMBA created: vocab=1000, embed=64, layers=2, dState=8")
+      println("  [Model] MAMBA created")
 
-      val startTime = System.currentTimeMillis()
-
-      val trainer = new MatchTrainer(
-        model,
-        learningRate = 0.001f,
-        device = benchmarkDevice,
-        numEpochs = 2,
-        verbose = true
-      )
-
+      val trainer = new MatchTrainer(model, 0.001f, device = device, numEpochs = 2, verbose = true)
       trainer.fit(trainLoader)
 
-      val trainingTime = (System.currentTimeMillis() - startTime) / 1000.0f
-      val throughput = numSamples * 2 / trainingTime
-
       val recall = trainer.evaluate(trainLoader, topk = 10)
+      println(f"  [PASS] MAMBA: Recall@10=$recall%.4f")
 
-      println(f"  [PASS] MAMBA AliExpress: Recall@10=$recall%.4f, Time=${trainingTime % .2f}s")
-
-      BenchmarkResult(
-        task = "matching",
-        model = "MAMBA",
-        dataset = "AliExpress_NL",
-        metrics = Map("recall@10" -> recall, "loss" -> 0.5f),
-        trainingTime = trainingTime,
-        throughput = throughput,
-        memoryUsed = 0.0f
-      )
+      AliExpressResult("matching", "MAMBA", Map("recall@10" -> recall))
     } catch {
       case e: Throwable =>
-        println(s"  [FAIL] MAMBA AliExpress: ${e.getMessage}")
+        println(s"  [FAIL] MAMBA: ${e.getMessage}")
         e.printStackTrace()
-        BenchmarkResult("matching", "MAMBA", "AliExpress_NL", Map("error" -> 0.0f), 0.0f, 0.0f, 0.0f)
+        AliExpressResult("matching", "MAMBA", Map("error" -> 0.0f))
     }
   }
 
-  def printResults(results: List[BenchmarkResult]): Unit = {
+  def runMINDAiExpress(): AliExpressResult = {
+    println("\n--- MIND AliExpress Benchmark ---")
+    val device = DeviceSupport.backend
+    try {
+      val (trainDS, testDS) = AliExpressDataset.load("./data/AliExpress_NL")
+      println(s"  [Data] Train: ${trainDS.size}, Test: ${testDS.size}")
+
+      val numSamples = trainDS.size.toInt
+      val seqLen = 10
+      val vocabSize = 1000L
+      val rng = new Random(42)
+
+      // Use actual feature names from the dataset
+      val catNames = trainDS.features.keys.filter(k => k.startsWith("cat_") || k.startsWith("categorical")).toList
+      val seqFeatName = catNames.head  // Use first available feature
+      val catTensor = trainDS.features(seqFeatName)
+
+      // Build sequence indices for MIND
+      val seqIndicesArr = Array.ofDim[Float](numSamples * seqLen)
+      for (i <- 0 until numSamples) {
+        val baseIdx = catTensor.select(0, i).itemSafe().toInt
+        for (j <- 0 until seqLen) {
+          val offset = rng.nextInt(100) - 50
+          seqIndicesArr(i * seqLen + j) = math.max(0, math.min(vocabSize - 1, baseIdx + offset)).toFloat
+        }
+      }
+      val seqIndicesTensor = tensor(seqIndicesArr, Array(numSamples.toLong, seqLen.toLong)).toType(ScalarType.Long)
+
+      val clickLabelKey = "click"
+      val clickLabelsRaw = trainDS.taskLabels.get(clickLabelKey)
+      val clickLabelsArr = if (clickLabelsRaw.nonEmpty) {
+        val raw = clickLabelsRaw.get
+        (0 until numSamples).map(i => raw.select(0, i).itemSafe().toFloat).toArray
+      } else {
+        Array.tabulate(numSamples)(_ => if (rng.nextFloat() > 0.5f) 1.0f else 0.0f)
+      }
+      val labelsTensor = tensor(clickLabelsArr, Array(numSamples.toLong))
+
+      val userCatNames = catNames.filterNot(_ == seqFeatName).take(4)
+      val userFeatureTensors = userCatNames.map(name => name -> trainDS.features(name)).toMap
+
+      val matchingDS = new torchrec.data.MatchingDataset(
+        userFeatures = userFeatureTensors,
+        itemFeatures = userFeatureTensors,  // MIND uses same features for user/item matching
+        labels = Some(labelsTensor)
+      )
+
+      val trainLoader = new DataLoader(matchingDS, 128, shuffle = true)
+
+      val features = userCatNames.map(n => SparseFeature(n, 1000, 8))
+      val seqFeature = SequenceFeature(seqFeatName, vocabSize.toInt, 8, maxLen = seqLen)
+
+      val model = new MIND(
+        features = features,
+        sequenceFeature = seqFeature,
+        embedDim = 8,
+        numInterests = 4,
+        capsuleDim = 4,
+        mlpDims = List(64L, 32L),
+        dropout = 0.1f,
+        device = device
+      )
+
+      println("  [Model] MIND created")
+
+      val trainer = new MatchTrainer(model, 0.001f, device = device, numEpochs = 2, verbose = true)
+      trainer.fit(trainLoader)
+
+      val recall = trainer.evaluate(trainLoader, topk = 10)
+      println(f"  [PASS] MIND: Recall@10=$recall%.4f")
+
+      AliExpressResult("matching", "MIND", Map("recall@10" -> recall))
+    } catch {
+      case e: Throwable =>
+        println(s"  [FAIL] MIND: ${e.getMessage}")
+        e.printStackTrace()
+        AliExpressResult("matching", "MIND", Map("error" -> 0.0f))
+    }
+  }
+
+  def runDIENAliExpress(): AliExpressResult = {
+    println("\n--- DIEN AliExpress Benchmark ---")
+    val device = DeviceSupport.backend
+    try {
+      val (trainDS, testDS) = AliExpressDataset.load("./data/AliExpress_NL")
+      println(s"  [Data] Train: ${trainDS.size}, Test: ${testDS.size}")
+
+      val numSamples = trainDS.size.toInt
+      val seqLen = 10
+      val vocabSize = 1000L
+      val rng = new Random(42)
+
+      // Use actual feature names from the dataset
+      val catNames = trainDS.features.keys.filter(k => k.startsWith("cat_") || k.startsWith("categorical")).toList
+      val seqFeatName = catNames.head  // Use first available feature
+      val catTensor = trainDS.features(seqFeatName)
+
+      // Build sequence indices for DIEN
+      val seqIndicesArr = Array.ofDim[Float](numSamples * seqLen)
+      for (i <- 0 until numSamples) {
+        val baseIdx = catTensor.select(0, i).itemSafe().toInt
+        for (j <- 0 until seqLen) {
+          val offset = rng.nextInt(100) - 50
+          seqIndicesArr(i * seqLen + j) = math.max(0, math.min(vocabSize - 1, baseIdx + offset)).toFloat
+        }
+      }
+      val seqIndicesTensor = tensor(seqIndicesArr, Array(numSamples.toLong, seqLen.toLong)).toType(ScalarType.Long)
+
+      val clickLabelKey = "click"
+      val clickLabelsRaw = trainDS.taskLabels.get(clickLabelKey)
+      val clickLabelsArr = if (clickLabelsRaw.nonEmpty) {
+        val raw = clickLabelsRaw.get
+        (0 until numSamples).map(i => raw.select(0, i).itemSafe().toFloat).toArray
+      } else {
+        Array.tabulate(numSamples)(_ => if (rng.nextFloat() > 0.5f) 1.0f else 0.0f)
+      }
+      val labelsTensor = tensor(clickLabelsArr, Array(numSamples.toLong))
+
+      val sparseNames = catNames.filterNot(_ == seqFeatName).take(4)
+
+      // Use "seq" as the fixed sequence feature name for DIEN
+      val features = sparseNames.map(n => SparseFeature(n, 1000, 8))
+      val seqFeature = SequenceFeature("seq", vocabSize.toInt, 8, maxLen = seqLen)
+
+      val matchingDS = new torchrec.data.MatchingDataset(
+        userFeatures = sparseNames.map(n => n -> trainDS.features(n)).toMap,
+        itemFeatures = sparseNames.map(n => n -> trainDS.features(n)).toMap,
+        labels = Some(labelsTensor),
+        tokens = Some(seqIndicesTensor)
+      )
+
+      val trainLoader = new DataLoader(matchingDS, 128, shuffle = true)
+
+      val model = new DIEN(
+        features = features,
+        sequenceFeatures = List(seqFeature),
+        embedDim = 8,
+        mlpDims = List(64L, 32L),
+        dropout = 0.1f,
+        device = device
+      )
+
+      println("  [Model] DIEN created")
+
+      val trainer = new MatchTrainer(model, 0.001f, device = device, numEpochs = 2, verbose = true)
+      trainer.fit(trainLoader)
+
+      val recall = trainer.evaluate(trainLoader, topk = 10)
+      println(f"  [PASS] DIEN: Recall@10=$recall%.4f")
+
+      AliExpressResult("matching", "DIEN", Map("recall@10" -> recall))
+    } catch {
+      case e: Throwable =>
+        println(s"  [FAIL] DIEN: ${e.getMessage}")
+        e.printStackTrace()
+        AliExpressResult("matching", "DIEN", Map("error" -> 0.0f))
+    }
+  }
+
+  def printResults(results: List[AliExpressResult]): Unit = {
     println("\n" + "=" * 80)
     println("AliExpress Benchmark Results Summary")
     println("=" * 80)
-    println(f"${"Task"}%-12s${"Model"}%-12s${"Dataset"}%-12s${"Training Time"}%-15s${"Throughput"}%-12s${"Metrics"}%-20s")
-    println("-" * 80)
 
-    results.foreach { r =>
-      val metricStr = r.metrics.map { case (k, v) => f"$k=${v}%.4f" }.mkString(", ")
-      val status = if (r.metrics.contains("error")) "[FAIL]" else "[PASS]"
-      println(f"$status ${r.task}%-8s ${r.model}%-10s ${r.dataset}%-12s ${r.trainingTime}%12.2fs  ${r.throughput}%10.2f/s  $metricStr")
+    results.groupBy(_.task).foreach { case (task, taskResults) =>
+      println(s"\n[$task]")
+      println("-" * 70)
+      taskResults.foreach { r =>
+        val metricStr = r.metrics.map { case (k, v) => f"$k=$v%.4f" }.mkString(", ")
+        val status = if (r.metrics.contains("error")) "[FAIL]" else "[PASS]"
+        println(f"$status ${r.model}%-15s $metricStr")
+      }
     }
     println("=" * 80)
   }
 }
+
+case class AliExpressResult(
+  task: String,
+  model: String,
+  metrics: Map[String, Float]
+)

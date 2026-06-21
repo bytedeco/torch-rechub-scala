@@ -62,8 +62,10 @@ object QuickStartCTR {
 
     // Step 3: Create model
     println("\nStep 3: Creating DeepFM model...")
+    val halfIdx = features.size / 2
     val model = new DeepFM(
-      features = features,
+      deepFeatures = features.take(halfIdx),
+      fmFeatures = features.drop(halfIdx),
       embedDim = 8,
       mlpDims = List(64L, 32L),
       dropout = 0.2f,

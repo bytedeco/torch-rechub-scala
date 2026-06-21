@@ -107,10 +107,15 @@ class VectorQuantizer(
 
   /** Forward pass - apply vector quantization */
   def forward(x: Tensor, use_sk: Boolean = true): (Tensor, Tensor, Tensor) = {
-    // Handle different input shapes
+    // Handle 2D ([batch, e_dim]) and 3D ([batch, seq, e_dim]) input shapes.
     val batchSize = x.size(0)
-    val seqLen = if (x.dim() > 1) x.size(1) else 1L
-    val flat = x.view(-1, e_dim.toLong)
+    val (seqLen, flat) = if (x.dim() == 3L) {
+      (x.size(1), x.view(-1, e_dim.toLong))
+    } else if (x.dim() == 2L) {
+      (1L, x)
+    } else {
+      (1L, x.view(-1, e_dim.toLong))
+    }
 
     // Initialize embeddings if needed (during training)
     if (!initted && is_training()) {
@@ -120,8 +125,8 @@ class VectorQuantizer(
     // Calculate L2 distance: d = ||z||^2 + ||e||^2 - 2<z,e>
     // Use torch.pow with Scalar for exponent (like FM.scala)
     val twoScalar = new Scalar(2.0)
-    val latentSq = torch.pow(flat, twoScalar).sum(1)
-    val codebookSq = torch.pow(embedding.weight(), twoScalar).sum(1)
+    val latentSq = torch.pow(flat, twoScalar).sum(1).unsqueeze(1)
+    val codebookSq = torch.pow(embedding.weight(), twoScalar).sum(1).unsqueeze(0)
     val crossTerm = torch.matmul(flat, embedding.weight().t()).mul(new Scalar(-2.0))
     var d = latentSq.add(codebookSq).add(crossTerm)
 
@@ -144,8 +149,10 @@ class VectorQuantizer(
     val x_q = embedding.forward(indices.toType(ScalarType.Long))
 
     // Reshape to original shape
-    val x_q_reshaped = if (x.dim() > 1) {
+    val x_q_reshaped = if (x.dim() == 3L) {
       x_q.view(batchSize, seqLen, e_dim.toLong)
+    } else if (x.dim() == 2L) {
+      x_q.view(batchSize, e_dim.toLong)
     } else {
       x_q
     }
@@ -161,7 +168,7 @@ class VectorQuantizer(
     val x_q_st = x.add(x_q_reshaped.sub(x).detach())
 
     // Reshape indices
-    val indicesFinal = indices.view(batchSize, seqLen)
+    val indicesFinal = if (x.dim() == 3L) indices.view(batchSize, seqLen) else indices.view(batchSize, 1L)
 
     (x_q_st, loss.mean(), indicesFinal)
   }
@@ -193,6 +200,9 @@ class ResidualVectorQuantizer(
   private val num_quantizers = n_e_list.size
   private val sk_eps_list = sk_epsilon_list.getOrElse(List.fill(num_quantizers)(0.003f))
 
+  // Keep typed references to avoid unsafe casting from generic ModuleList entries.
+  private val vqRefs = mutable.ArrayBuffer[VectorQuantizer]()
+
   // ModuleListImpl to store VectorQuantizer layers - matches PyTorch's nn.ModuleList
   private val vq_layers: ModuleListImpl = {
     val moduleList = new ModuleListImpl()
@@ -206,6 +216,7 @@ class ResidualVectorQuantizer(
         device
       )
       moduleList.push_back(vq)
+      vqRefs += vq
       register_module(s"vq_$i", vq)
     }
     moduleList
@@ -213,9 +224,7 @@ class ResidualVectorQuantizer(
 
   /** Return stacked codebooks from all quantizers */
   def getCodebook(): Tensor = {
-    val codebooks = (0 until num_quantizers).map { i =>
-      vq_layers.get(i).asInstanceOf[VectorQuantizer].getCodebook()
-    }
+    val codebooks = vqRefs.map(_.getCodebook())
     torch.stack(new TensorVector(codebooks.toSeq: _*))
   }
 
@@ -227,8 +236,7 @@ class ResidualVectorQuantizer(
     var x_q = torch.zeros_like(x)
     var residual = x
 
-    for (i <- 0 until num_quantizers) {
-      val vq = vq_layers.get(i).asInstanceOf[VectorQuantizer]
+    for (vq <- vqRefs) {
       val (x_res, loss, indices) = vq.forward(residual, use_sk)
 
       // Update residual: r = r - quantized

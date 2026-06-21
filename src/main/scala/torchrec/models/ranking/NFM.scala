@@ -49,8 +49,9 @@ class NFM(
     sparseFeats: Map[String, Tensor],
     denseFeats: Map[String, Tensor] = Map.empty
   ): Tensor = {
-    // Get embeddings: (batch, num_fields, embed_dim)
-    val embeddings = embeddingLayer.forward(sparseFeats)
+    // Get embeddings as 3D tensor: (batch, num_fields, embed_dim)
+    // NFM relies on field dimension for bi-interaction pooling, use forward3D
+    val embeddings = embeddingLayer.forward3D(sparseFeats, sequenceFeats = Map.empty)
 
     // 1st-order: sum of embeddings
     val firstOrder = embeddings.sum(1)  // (batch, embed_dim)

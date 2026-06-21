@@ -47,8 +47,10 @@ object DeepFMExample {
 
     // Create model
     println("\n[2] Creating DeepFM model...")
+    val halfIdx = numSparseFeatures / 2
     val model = new DeepFM(
-      features = features,
+      deepFeatures = features.take(halfIdx),
+      fmFeatures = features.drop(halfIdx),
       embedDim = embedDim,
       mlpDims = List(128L, 64L),
       dropout = 0.2f,

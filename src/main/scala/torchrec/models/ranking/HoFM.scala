@@ -47,7 +47,8 @@ class HoFM(
   register_module("embedding", embeddingLayer)
 
   // FM for 2nd-order interactions
-  private val fm = new FM(embedDim, device)
+  // Use FMInteraction which returns a vector of shape (batch, embed_dim)
+  private val fm = new torchrec.basic.layers.FMInteraction(embedDim)
   register_module("fm", fm)
 
   // AnovaKernel for order >= 3 interactions
@@ -77,7 +78,7 @@ class HoFM(
     denseFeats: Map[String, Tensor] = Map.empty
   ): Tensor = {
     // Get embeddings: (batch, num_fields, embed_dim)
-    val embeddings = embeddingLayer.forward(sparseFeats)
+    val embeddings = embeddingLayer.forward3D(sparseFeats)
     val batchSize = embeddings.size(0).toInt
 
     // Accumulate interaction outputs
@@ -101,9 +102,13 @@ class HoFM(
     val combined = if (interactionOutputs.size == 1) {
       interactionOutputs.head
     } else {
-      val tensorVec = new TensorVector(interactionOutputs.size.toLong)
-      interactionOutputs.foreach(tensorVec.push_back)
-      torch.cat(tensorVec, 1)
+      val tensorVec = new TensorVector()
+      val targetDev = interactionOutputs.head.device()
+      interactionOutputs.foreach { t =>
+        val onDev = if (t.device().equals(targetDev)) t else t.to(targetDev, t.dtype())
+        tensorVec.push_back(onDev)
+      }
+      torch.cat(tensorVec, 1L)
     }
 
     // Flatten if needed

@@ -53,7 +53,7 @@ class FNN(
   ): Tensor = {
     // Get FM-style embeddings: (batch, num_fields * embed_dim)
     val embeddings = embeddingLayer.forward(sparseFeats)
-    // Forward through MLP
-    mlp.forward(embeddings).squeeze(1)
+    // Forward through MLP -> keep (batch,1) shape for consistency
+    mlp.forward(embeddings)
   }
 }

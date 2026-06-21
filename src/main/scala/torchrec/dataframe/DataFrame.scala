@@ -222,32 +222,46 @@ class DataFrame(
       rightMap.getOrElseUpdate(key, mutable.ListBuffer()) += i
     }
 
-    val leftCol = columnMap(on)
-    val matchingIndices = mutable.ListBuffer[Int]()
-
-    for (i <- 0 until leftCol.length) {
-      val key = leftCol(i)
-      if (rightMap.contains(key)) {
-        matchingIndices += i
-      }
-    }
-
-    if (matchingIndices.isEmpty) {
-      return limit(0)
-    }
-
-    val newColumns = mutable.Map[String, Column]()
+    val outputColumns = mutable.LinkedHashMap[String, mutable.ArrayBuffer[Any]]()
+    val outputTypes = mutable.LinkedHashMap[String, DataType]()
 
     for ((name, col) <- columnMap) {
-      val newData = mutable.ArrayBuffer[Any]()
-      for (idx <- matchingIndices) {
-        newData += col(idx)
-      }
-      newColumns(name) = new Column(name, newData, col.dtype)
+      outputColumns(name) = mutable.ArrayBuffer[Any]()
+      outputTypes(name) = col.dtype
+    }
+    for ((name, col) <- other.columnMap if name != on) {
+      val outName = if (outputColumns.contains(name)) s"${name}_right" else name
+      outputColumns(outName) = mutable.ArrayBuffer[Any]()
+      outputTypes(outName) = col.dtype
     }
 
-    val newSchema = StructType(schema.fields.filter(f => newColumns.contains(f.name)))
-    new DataFrame(newColumns.toMap, newSchema)
+    val leftCol = columnMap(on)
+    var matchedRows = 0
+    for (leftIdx <- 0 until leftCol.length) {
+      val key = leftCol(leftIdx)
+      rightMap.get(key).foreach { rightIndices =>
+        rightIndices.foreach { rightIdx =>
+          for ((name, col) <- columnMap) {
+            outputColumns(name) += col(leftIdx)
+          }
+          for ((name, col) <- other.columnMap if name != on) {
+            val outName = if (columnMap.contains(name)) s"${name}_right" else name
+            outputColumns(outName) += col(rightIdx)
+          }
+          matchedRows += 1
+        }
+      }
+    }
+
+    if (matchedRows == 0) {
+      return DataFrame.empty()
+    }
+
+    val finalColumns = outputColumns.map { case (name, data) =>
+      name -> new Column(name, data, outputTypes(name))
+    }.toMap
+    val finalSchema = StructType(finalColumns.toSeq.map { case (name, col) => StructField(name, col.dtype) })
+    new DataFrame(finalColumns, finalSchema)
   }
 
   private def leftJoin(other: DataFrame, on: String): DataFrame = {
@@ -439,17 +453,26 @@ object DataFrame {
 
     if (lines.isEmpty) return empty()
 
-    val header = lines.head.split(delimiter.toString).map(_.trim)
+    val header = parseCsvLine(lines.head, delimiter).map(unquoteCsvField).map(_.trim)
     val dataLines = lines.tail
+
+    // Debug: print header and first few parsed lines to help diagnose parsing issues
+    try {
+      System.err.println(s"[readCSV DEBUG] header(${header.length})=${header.take(10).mkString(",")}")
+      val sampleN = math.min(5, dataLines.length)
+      for (i <- 0 until sampleN) {
+        val pl = parseCsvLine(dataLines(i), delimiter).map(unquoteCsvField).map(_.trim)
+        System.err.println(s"[readCSV DEBUG] parsed line ${i + 1}: cols=${pl.length} sample=${pl.take(10).mkString("[", ",", "]")} ")
+      }
+    } catch { case _: Throwable => () }
 
     val columnData = mutable.LinkedHashMap[String, mutable.ArrayBuffer[Any]]()
     for (col <- header) {
-      columnData(col) = mutable.ArrayBuffer(
-        dataLines.map { line =>
-          val cols = line.split(delimiter.toString)
-          if (cols.length > header.indexOf(col)) cols(header.indexOf(col)).trim else ""
-        }: _*
-      )
+      columnData(col) = mutable.ArrayBuffer(dataLines.map { line =>
+        val cols = parseCsvLine(line, delimiter)
+        val idx = header.indexOf(col)
+        if (idx >= 0 && cols.length > idx) unquoteCsvField(cols(idx)).trim else ""
+      }: _*)
     }
 
     val colMap = columnData.map { case (name, values) =>
@@ -459,11 +482,11 @@ object DataFrame {
       for (v <- values) {
         val s = v.toString
         dtype match {
-          case DataType.Int32 => data += s.toIntOption.getOrElse(0)
-          case DataType.Int64 => data += s.toLongOption.getOrElse(0L)
-          case DataType.Float32 => data += s.toFloatOption.getOrElse(0.0f)
-          case DataType.Float64 => data += s.toDoubleOption.getOrElse(0.0)
-          case DataType.Boolean => data += s.toBooleanOption.getOrElse(false)
+              case DataType.Int32 => data += s.toIntOption.getOrElse(0)
+              case DataType.Int64 => data += s.toLongOption.getOrElse(0L)
+              case DataType.Float32 => data += s.toFloatOption.getOrElse(Float.NaN)
+              case DataType.Float64 => data += s.toDoubleOption.getOrElse(Double.NaN)
+              case DataType.Boolean => data += s.toBooleanOption.getOrElse(false)
           case _ => data += s
         }
       }
@@ -519,6 +542,37 @@ object DataFrame {
     else if (sample.forall(v => v.toDoubleOption.isDefined)) DataType.Float64
     else if (sample.forall(v => v.toBooleanOption.isDefined)) DataType.Boolean
     else DataType.String
+  }
+
+  private def parseCsvLine(line: String, delimiter: Char): Array[String] = {
+    val fields = mutable.ArrayBuffer[String]()
+    val current = new StringBuilder
+    var inQuotes = false
+    var i = 0
+    while (i < line.length) {
+      val ch = line.charAt(i)
+      if (ch == '"') {
+        if (inQuotes && i + 1 < line.length && line.charAt(i + 1) == '"') {
+          current.append('"')
+          i += 1
+        } else {
+          inQuotes = !inQuotes
+        }
+      } else if (ch == delimiter && !inQuotes) {
+        fields += current.result()
+        current.clear()
+      } else {
+        current.append(ch)
+      }
+      i += 1
+    }
+    fields += current.result()
+    fields.toArray
+  }
+
+  private def unquoteCsvField(value: String): String = {
+    if (value.length >= 2 && value.head == '"' && value.last == '"') value.substring(1, value.length - 1)
+    else value
   }
 }
 

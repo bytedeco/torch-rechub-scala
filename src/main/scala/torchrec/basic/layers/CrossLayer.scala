@@ -29,6 +29,10 @@ class CrossLayer(
 
   private val b = torch.zeros(Array[Long](inputDim), new TensorOptions().dtype(new ScalarTypeOptional(ScalarType.Float)))
   register_buffer("b", b)
+  // Ensure module parameters and buffers are moved to target device
+  if (device != "cpu") {
+    this.to(new org.bytedeco.pytorch.Device(device), false)
+  }
 
   def forward(x0: Tensor, xi: Tensor): Tensor = {
     val wtx = w.forward(xi) // (batch, 1)

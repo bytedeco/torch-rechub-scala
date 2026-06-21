@@ -111,8 +111,14 @@ object RealDataBenchmark {
 
       // 26 sparse features (C1-C26), hash-encoded to vocabSize=100000
       val sparseFeats = (0 until 26).map(i => SparseFeature(s"sparse_$i", 100000, 8)).toList
-
-      val model = new DeepFM(sparseFeats, embedDim = 8, mlpDims = List(128L, 64L), dropout = 0.2f, device = device)
+      val halfIdx = 13
+      val model = new DeepFM(
+        deepFeatures = sparseFeats.take(halfIdx),
+        fmFeatures = sparseFeats.drop(halfIdx),
+        embedDim = 8,
+        mlpDims = List(128L, 64L),
+        dropout = 0.2f,
+        device = device)
 
       val trainer = new CTRTrainer(model, learningRate = 0.01f, device = device, numEpochs = 3, earlyStopPatience = 3, verbose = true)
 
@@ -171,7 +177,17 @@ object RealDataBenchmark {
         SparseFeature("native_country", 100, 4)
       )
 
-      val model = new DeepFM(features, embedDim = 8, mlpDims = List(32L, 16L), dropout = 0.2f, device = device)
+      val model = {
+        val halfIdx = features.size / 2
+        new DeepFM(
+          deepFeatures = features.take(halfIdx),
+          fmFeatures = features.drop(halfIdx),
+          embedDim = 8,
+          mlpDims = List(32L, 16L),
+          dropout = 0.2f,
+          device = device
+        )
+      }
 
       val trainer = new CTRTrainer(model, learningRate = 0.01f, numEpochs = 3, device = device, earlyStopPatience = 3, verbose = true)
 

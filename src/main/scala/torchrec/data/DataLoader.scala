@@ -2,6 +2,7 @@ package torchrec.data
 
 import org.bytedeco.pytorch._
 import org.bytedeco.pytorch.global.torch
+import org.bytedeco.pytorch.global.torch.ScalarType
 import torchrec.utils.DeviceSupport
 
 import scala.jdk.CollectionConverters._
@@ -142,16 +143,35 @@ class DataLoader(
     val d = new Device(effectiveDevice)
     def move(t: Tensor): Tensor = t.to(d, t.dtype())
 
+    // Feature names that must be integer index tensors for embedding/index_select
+    val indexFeatureNames = Set("questions", "concepts", "responses", "target_concepts", "exerciseIds", "categoryIds", "responseIds")
+
+    def stackAndEnsure(tensors: mutable.ListBuffer[Tensor], name: String): Tensor = {
+      val stacked = tensors.toSeq.stack(0)
+      if (indexFeatureNames.contains(name)) {
+        // Force Long dtype for index features to avoid accidental float upcasting
+        val asLong = try { stacked.toType(ScalarType.Long) } catch { case _: Throwable => stacked }
+        if (asLong.is_contiguous()) asLong else asLong.contiguous()
+      } else stacked
+    }
+
     val sparseTensors = sparseBuilder.map { case (name, tensors) =>
-      name -> move(tensors.toSeq.stack(0))
+      // Ensure index-like features are Long on the target device after stacking/move
+      val stacked = stackAndEnsure(tensors, name)
+      val moved = move(stacked)
+      val finalT = if (indexFeatureNames.contains(name)) moved.to(d, ScalarType.Long) else moved
+      name -> finalT
     }.toMap
 
     val denseTensors = denseBuilder.map { case (name, tensors) =>
-      name -> move(tensors.toSeq.stack(0))
+      name -> move(stackAndEnsure(tensors, name))
     }.toMap
 
     val seqTensors = seqBuilder.map { case (name, tensors) =>
-      name -> move(tensors.toSeq.stack(0))
+      val stacked = stackAndEnsure(tensors, name)
+      val moved = move(stacked)
+      val finalT = if (indexFeatureNames.contains(name)) moved.to(d, ScalarType.Long) else moved
+      name -> finalT
     }.toMap
 
     val labels = if (hasLabels) {
@@ -186,7 +206,10 @@ class DataLoader(
       }.toMap)
     } else None
 
-    Batch(sparseTensors, denseTensors, seqTensors, labels, batchTokens, batchPositions, batchTimeDiffs, batchTargets, batchItemFeats, batchTaskLabels)
+    // batchTaskLabels corresponds to the named parameter `taskLabels` in Batch.
+    // Ensure we pass it as the 11th argument (or by name) so it doesn't get bound
+    // to `negItemFeatures` by position accidentally.
+    Batch(sparseTensors, denseTensors, seqTensors, labels, batchTokens, batchPositions, batchTimeDiffs, batchTargets, batchItemFeats, negItemFeatures = None, taskLabels = batchTaskLabels)
   }
 }
 

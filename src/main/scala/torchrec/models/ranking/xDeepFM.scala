@@ -63,6 +63,7 @@ class xDeepFM(
   private val linearWeight = {
     val w = new org.bytedeco.pytorch.LinearImpl(sparseDim, 1)
     register_module("linear", w)
+    w.to(new org.bytedeco.pytorch.Device(device), false)
     w
   }
 
@@ -70,18 +71,18 @@ class xDeepFM(
     sparseFeats: Map[String, Tensor],
     denseFeats: Map[String, Tensor] = Map.empty
   ): Tensor = {
-    // Get embeddings: (batch, num_fields, embed_dim)
-    val embeddings = embeddingLayer.forward(sparseFeats)
-    val batchSize = embeddings.size(0)
+    // Get embeddings: (batch, num_fields, embed_dim) using forward3D
+    val embeddings3D = embeddingLayer.forward3D(sparseFeats)
+    val batchSize = embeddings3D.size(0)
 
     // 1) CIN: explicit high-order feature interactions (scalar per batch)
-    val cinOut = cin.forward(embeddings)  // (batch,)
+    val cinOut = cin.forward(embeddings3D)  // (batch,)
 
     // 2) FM: 2nd-order feature interactions (scalar per batch)
-    val fmOut = fmLayer.forward(embeddings).squeeze(1)  // (batch,)
+    val fmOut = fmLayer.forward(embeddings3D).squeeze(1)  // (batch,)
 
-    // 3) Flatten embeddings for DNN and linear
-    val flatEmbeddings = embeddings.view(batchSize, sparseDim)  // (batch, num_fields * embed_dim)
+    // 3) Flatten 3D embeddings to 2D for DNN and linear
+    val flatEmbeddings = embeddings3D.view(batchSize, sparseDim)  // (batch, num_fields * embed_dim)
 
     // 4) DNN: implicit high-order interactions
     val mlpOut = mlp.forward(flatEmbeddings).squeeze(1)  // (batch,)

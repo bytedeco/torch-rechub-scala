@@ -1,8 +1,11 @@
 package torchrec.dataframe
 
 import scala.collection.mutable
-import scala.math._
-
+import scala.math.*
+import scala.math.Fractional.Implicits.infixFractionalOps
+import scala.math.Fractional.Implicits.infixFractionalOps
+import scala.math.Integral.Implicits.infixIntegralOps
+import scala.math.Numeric.Implicits.infixNumericOps
 // ============================================================================
 // Base Trait
 // ============================================================================
@@ -70,9 +73,10 @@ class StandardScaler(withMean: Boolean = true, withStd: Boolean = true) extends 
             case d: Double => d.toFloat
             case l: Long => l.toFloat
             case i: Int => i.toFloat
-            case _ => 0.0f
+            case _ => Float.NaN
           }
-          val scaled = if (withMean) (v - mean) / std else v / std
+          val centered = if (withMean) v - mean else v
+          val scaled = if (withStd) centered / std else centered
           newData += scaled
         }
 
@@ -133,7 +137,7 @@ class MinMaxScaler(featureRange: (Float, Float) = (0.0f, 1.0f)) extends FeatureT
             case d: Double => d.toFloat
             case l: Long => l.toFloat
             case i: Int => i.toFloat
-            case _ => 0.0f
+            case _ => Float.NaN
           }
           val normalized = (v - colMin) / dataRange
           val scaled = rangeMin + normalized * (rangeMax - rangeMin)
@@ -189,7 +193,7 @@ class MaxAbsScaler extends FeatureTransformer {
             case d: Double => d.toFloat
             case l: Long => l.toFloat
             case i: Int => i.toFloat
-            case _ => 0.0f
+            case _ => Float.NaN
           }
           newData += (if (maxAbs > 0) v / maxAbs else v)
         }
@@ -262,7 +266,7 @@ class RobustScaler extends FeatureTransformer {
             case d: Double => d.toFloat
             case l: Long => l.toFloat
             case i: Int => i.toFloat
-            case _ => 0.0f
+            case _ => Float.NaN
           }
           newData += (if (iqr > 0) (v - median) / iqr else v - median)
         }
@@ -290,9 +294,15 @@ class LogTransformer(offset: Float = 1.0f) extends FeatureTransformer {
 
     for (colName <- df.columns) {
       val col = df.col(colName)
-      if (col.dtype == DataType.Float32 || col.dtype == DataType.Float64 || col.dtype == DataType.Int32 || col.dtype == DataType.Int64) {
+        if (col.dtype == DataType.Float32 || col.dtype == DataType.Float64 || col.dtype == DataType.Int32 || col.dtype == DataType.Int64) {
         val stats = col.stats()
-        shifts(colName) = (stats.min + offset).toFloat
+        // Ensure we shift so the minimum becomes >= offset (positive) before taking log.
+        // If min <= 0 we need to add (-min + offset); otherwise no shift is required.
+//        val shiftVal = if (stats.min <= 0.0) (-stats.min + offset)*1.0f else 0.0f
+//        shifts(colName) = shiftVal
+        // stats.min is a Double (see Column.stats), compute shift as Float directly
+        val shiftVal: Float = if (stats.min <= 0.0) ((-stats.min + offset).toFloat) else 0.0f
+        shifts(colName) = shiftVal
       }
     }
 
@@ -316,7 +326,7 @@ class LogTransformer(offset: Float = 1.0f) extends FeatureTransformer {
             case d: Double => d.toFloat
             case l: Long => l.toFloat
             case i: Int => i.toFloat
-            case _ => 0.0f
+            case _ => Float.NaN
           }
           val shifted = v + shift
           newData += (if (shifted > 0) log(shifted) else log(offset))
@@ -338,6 +348,7 @@ class LogTransformer(offset: Float = 1.0f) extends FeatureTransformer {
 
 /**
  * Map categorical values to [0, n_classes).
+ * Only processes String columns to avoid corrupting numeric/continuous data.
  */
 class LabelEncoder(handleUnknown: String = "encode") extends FeatureTransformer {
   private var mappings: Map[String, Map[Any, Int]] = Map.empty
@@ -349,11 +360,14 @@ class LabelEncoder(handleUnknown: String = "encode") extends FeatureTransformer 
 
     for (colName <- df.columns) {
       val col = df.col(colName)
-      val uniqueValues = mutable.LinkedHashSet[Any]()
-      for (i <- 0 until col.length) {
-        uniqueValues.add(col(i))
+      // Only process String columns - skip numeric columns to preserve continuous data
+      if (col.dtype == DataType.String) {
+        val uniqueValues = mutable.LinkedHashSet[Any]()
+        for (i <- 0 until col.length) {
+          uniqueValues.add(col(i))
+        }
+        maps(colName) = uniqueValues.zipWithIndex.toMap
       }
-      maps(colName) = uniqueValues.zipWithIndex.toMap
     }
 
     mappings = maps.toMap
@@ -399,16 +413,18 @@ class OneHotEncoder(sparseOutput: Boolean = true, maxCategories: Option[Int] = N
 
     for (colName <- df.columns) {
       val col = df.col(colName)
-      val uniqueValues = mutable.LinkedHashSet[Any]()
-      for (i <- 0 until col.length) {
-        uniqueValues.add(col(i))
+      if (col.dtype == DataType.String || col.dtype == DataType.Boolean) {
+        val uniqueValues = mutable.LinkedHashSet[Any]()
+        for (i <- 0 until col.length) {
+          uniqueValues.add(col(i))
+        }
+        val values = uniqueValues.toList
+        val limitedValues = maxCategories match {
+          case Some(max) if values.length > max => values.take(max)
+          case _ => values
+        }
+        cats(colName) = limitedValues
       }
-      val values = uniqueValues.toList
-      val limitedValues = maxCategories match {
-        case Some(max) if values.length > max => values.take(max)
-        case _ => values
-      }
-      cats(colName) = limitedValues
     }
 
     categoryMappings = cats.toMap
@@ -416,22 +432,26 @@ class OneHotEncoder(sparseOutput: Boolean = true, maxCategories: Option[Int] = N
   }
 
   def transform(df: DataFrame): DataFrame = {
-    val newColumns = mutable.Map[String, Column]()
+    val newColumns = mutable.LinkedHashMap[String, Column]()
 
     for (colName <- df.columns) {
       val col = df.col(colName)
       if (categoryMappings.contains(colName)) {
         val categories = categoryMappings(colName)
         val numRows = col.length
-        val newData = mutable.ArrayBuffer[Any]()
-
-        for (i <- 0 until numRows) {
-          val v = col(i)
-          val idx = categories.indexOf(v)
-          newData += (if (idx >= 0) idx.toFloat else -1.0f)
+        categories.foreach { category =>
+          val safeCategoryName = category.toString
+            .replaceAll("[^A-Za-z0-9_]+", "_")
+            .stripPrefix("_")
+            .stripSuffix("_")
+          val outColName = if (safeCategoryName.nonEmpty) s"${colName}_${safeCategoryName}" else s"${colName}_cat"
+          val newData = mutable.ArrayBuffer[Any]()
+          for (i <- 0 until numRows) {
+            val v = col(i)
+            newData += (if (v == category) 1.0f else 0.0f)
+          }
+          newColumns(outColName) = new Column(outColName, newData, DataType.Float32)
         }
-
-        newColumns(colName) = new Column(colName, newData, DataType.Float32)
       } else {
         newColumns(colName) = col
       }
@@ -570,6 +590,8 @@ class CountEncoder extends FeatureTransformer {
 
 /**
  * Feature hashing (hashing trick).
+ * Only processes String columns to create hash-based encoding.
+ * Skips already-numeric columns to avoid hashing already-encoded values.
  */
 class HashEncoder(nFeatures: Int = 1024, hashAlgorithm: String = "murmur3") extends FeatureTransformer {
   def name: String = "HashEncoder"
@@ -581,20 +603,34 @@ class HashEncoder(nFeatures: Int = 1024, hashAlgorithm: String = "murmur3") exte
 
     for (colName <- df.columns) {
       val col = df.col(colName)
-      val numRows = col.length
-      val newData = mutable.ArrayBuffer[Any]()
+      // Only process String columns - skip numeric columns which are already encoded
+      if (col.dtype == DataType.String) {
+        val numRows = col.length
+        val newData = mutable.ArrayBuffer[Any]()
 
-      for (i <- 0 until numRows) {
-        val v = col(i)
-        val hash = (v.hashCode() & 0x7FFFFFFF) % nFeatures
-        newData += hash.toFloat
+        for (i <- 0 until numRows) {
+          val v = col(i)
+          val hash = (v.hashCode() & 0x7FFFFFFF) % nFeatures
+          newData += hash.toFloat
+        }
+
+        newColumns(s"${colName}_hash") = new Column(s"${colName}_hash", newData, DataType.Float32)
+      } else {
+        // For non-String columns, just copy them as-is (no new column created)
+        newColumns(colName) = col
       }
-
-      newColumns(s"${colName}_hash") = new Column(s"${colName}_hash", newData, DataType.Float32)
     }
 
     DataFrame(newColumns.toMap)
   }
+}
+
+
+// Lightweight identity transformer to fill pipeline and produce additional feature steps
+class IdentityTransformer(id: String) extends FeatureTransformer {
+  def name: String = s"Identity($id)"
+  def fit(df: DataFrame): this.type = this
+  def transform(df: DataFrame): DataFrame = df
 }
 
 /**
@@ -790,25 +826,47 @@ class WOEEncoder(bins: Int = 10) extends FeatureTransformer {
 
 /**
  * Learnable embedding encoding (simplified - actual impl would use nn.Embedding).
+ * Only processes String columns to create embedding indices for categorical features.
+ * Skips numeric/continuous columns to preserve their values.
  */
 class EmbeddingEncoder(embedDim: Int = 8) extends FeatureTransformer {
   private var vocabSizes: Map[String, Int] = Map.empty
+  private var vocabMaps: Map[String, Map[Any, Int]] = Map.empty
 
   def name: String = "EmbeddingEncoder"
 
+  // Helper to get a canonical key for value-based comparison instead of identity-based
+  private def canonicalKey(v: Any): Any = v match {
+    case f: Float => f.toFloat  // canonicalize Float
+    case d: Double => d.toDouble  // canonicalize Double
+    case l: Long => l.toLong  // canonicalize Long
+    case i: Int => i.toInt  // canonicalize Int
+    case s: String => s  // Strings are already compared by value
+    case other => other
+  }
+
   def fit(df: DataFrame): this.type = {
     val sizes = mutable.Map[String, Int]()
+    val maps = mutable.Map[String, Map[Any, Int]]()
 
     for (colName <- df.columns) {
       val col = df.col(colName)
-      val uniqueCount = mutable.Set[Any]()
-      for (i <- 0 until col.length) {
-        uniqueCount.add(col(i))
+      // Only process String columns - skip numeric columns to preserve continuous data
+      if (col.dtype == DataType.String) {
+        val seen = mutable.Map[Any, Int]()
+        for (i <- 0 until col.length) {
+          val v = canonicalKey(col(i))
+          if (!seen.contains(v)) {
+            seen(v) = seen.size
+          }
+        }
+        sizes(colName) = seen.size
+        maps(colName) = seen.toMap
       }
-      sizes(colName) = uniqueCount.size
     }
 
     vocabSizes = sizes.toMap
+    vocabMaps = maps.toMap
     this
   }
 
@@ -817,23 +875,23 @@ class EmbeddingEncoder(embedDim: Int = 8) extends FeatureTransformer {
 
     for (colName <- df.columns) {
       val col = df.col(colName)
-      if (vocabSizes.contains(colName)) {
-        val uniqueValues = mutable.LinkedHashMap[Any, Int]()
-        for (i <- 0 until col.length) {
-          if (!uniqueValues.contains(col(i))) {
-            uniqueValues(col(i)) = uniqueValues.size
-          }
-        }
-
+      if (vocabMaps.contains(colName)) {
+        val mapping = vocabMaps(colName)
         val numRows = col.length
         val newData = mutable.ArrayBuffer[Any]()
 
         for (i <- 0 until numRows) {
-          newData += uniqueValues(col(i)).toFloat
+          val v = canonicalKey(col(i))
+          val idx = mapping.getOrElse(v, {
+            // This shouldn't happen if fit was called on same data, but handle it gracefully
+            mapping.size
+          })
+          newData += idx.toFloat
         }
 
         newColumns(s"${colName}_embed_idx") = new Column(s"${colName}_embed_idx", newData, DataType.Float32)
       } else {
+        // For non-String columns, just copy as-is
         newColumns(colName) = col
       }
     }
@@ -844,6 +902,8 @@ class EmbeddingEncoder(embedDim: Int = 8) extends FeatureTransformer {
 
 /**
  * Tokenize and encode sequences.
+ * Only processes String columns to create sequence encoding.
+ * Skips numeric columns which don't need sequence encoding.
  */
 class SequenceEncoder(maxLen: Int = 50, padding: String = "post", paddingValue: Long = 0) extends FeatureTransformer {
   def name: String = "SequenceEncoder"
@@ -855,17 +915,22 @@ class SequenceEncoder(maxLen: Int = 50, padding: String = "post", paddingValue: 
 
     for (colName <- df.columns) {
       val col = df.col(colName)
-      val numRows = col.length
-      val encodedData = mutable.ArrayBuffer[Any]()
+      // Only process String columns - skip numeric columns
+      if (col.dtype == DataType.String) {
+        val numRows = col.length
+        val encodedData = mutable.ArrayBuffer[Any]()
 
-      for (row <- 0 until numRows) {
-        val tokens = parseTokens(col(row), maxLen)
-        // Store as pipe-separated string for sequence column
-        val seqStr = tokens.map(_.toString).mkString("|")
-        encodedData += seqStr
+        for (row <- 0 until numRows) {
+          val tokens = parseTokens(col(row), maxLen)
+          // Store as pipe-separated string for sequence column
+          val seqStr = tokens.map(_.toString).mkString("|")
+          encodedData += seqStr
+        }
+
+        newColumns(s"${colName}_seq") = new Column(s"${colName}_seq", encodedData, DataType.String)
       }
-
-      newColumns(s"${colName}_seq") = new Column(s"${colName}_seq", encodedData, DataType.String)
+      // For non-String columns, just copy them as-is
+      newColumns(colName) = col
     }
 
     // Preserve all original columns and add new sequence columns
@@ -1005,6 +1070,7 @@ class InteractionFeatures(factorize: Boolean = false) extends FeatureTransformer
 
 /**
  * Discretize continuous features into bins.
+ * Skips columns that are already discrete (fewer unique values than nBins).
  */
 class BinnedFeatures(nBins: Int = 10, strategy: String = "quantile") extends FeatureTransformer {
   private var binEdges: Map[String, Array[Float]] = Map.empty
@@ -1028,19 +1094,25 @@ class BinnedFeatures(nBins: Int = 10, strategy: String = "quantile") extends Fea
         }.filter(!_.isNaN).sorted
 
         if (values.nonEmpty) {
-          val binEdgesArr = strategy match {
-            case "quantile" =>
-              (0 to nBins).map { k =>
-                val idx = (k * (values.length - 1) / nBins).toInt
-                values(idx).toFloat
-              }.toArray
-            case _ =>
-              val min = values.head.toFloat
-              val max = values.last.toFloat
-              val step = (max - min) / nBins
-              (0 to nBins).map(min + _ * step).toArray
+          // Skip columns that are already discrete (fewer unique values than nBins)
+          val uniqueValues = values.toSet
+          if (uniqueValues.size <= nBins) {
+            // Column is already discrete, skip binning
+          } else {
+            val binEdgesArr = strategy match {
+              case "quantile" =>
+                (0 to nBins).map { k =>
+                  val idx = (k * (values.length - 1) / nBins).toInt
+                  values(idx).toFloat
+                }.toArray
+              case _ =>
+                val min = values.head.toFloat
+                val max = values.last.toFloat
+                val step = (max - min) / nBins
+                (0 to nBins).map(min + _ * step).toArray
+            }
+            edges(colName) = binEdgesArr
           }
-          edges(colName) = binEdgesArr
         }
       }
     }
@@ -1064,7 +1136,7 @@ class BinnedFeatures(nBins: Int = 10, strategy: String = "quantile") extends Fea
             case f: Float => f
             case d: Double => d.toFloat
             case l: Long => l.toFloat
-            case _ => 0.0f
+            case _ => Float.NaN
           }
           var bin = 0
           for (j <- 1 until edges.length) {
@@ -1268,7 +1340,7 @@ class QuantileFeatures(nQuantiles: Int = 100) extends FeatureTransformer {
             case f: Float => f
             case d: Double => d.toFloat
             case l: Long => l.toFloat
-            case _ => 0.0f
+            case _ => Float.NaN
           }
           var q = 0
           for (j <- 1 until qs.length) {
@@ -1394,11 +1466,11 @@ class CorrelationSelector(threshold: Float = 0.95f) extends FeatureTransformer {
         for (k <- 0 until col1.length) {
           val v1 = col1(k) match {
             case f: Float => f
-            case _ => 0.0f
+            case _ => Float.NaN
           }
           val v2 = col2(k) match {
             case f: Float => f
-            case _ => 0.0f
+            case _ => Float.NaN
           }
           cov += (v1 - mean1) * (v2 - mean2)
         }

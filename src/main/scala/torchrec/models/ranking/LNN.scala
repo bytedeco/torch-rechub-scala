@@ -72,7 +72,7 @@ class LNN(
   }
 
   def forward(x: Tensor): Tensor = {
-    // x: (batch, num_fields, embed_dim)
+    // x: (batch, num_fields, embed_dim) = (B, F, E)
     val batchSize = x.size(0).toInt
 
     // Logarithmic transformation: log(1 + |x|)
@@ -80,13 +80,18 @@ class LNN(
     val logX = torch.log1p(absX)
 
     val w = lnnWeight.to(x.device(), ScalarType.Float)
+    // w: (lnn_dim, num_fields) = (L, F)
 
-    // Transpose lnn_weight to (num_fields, lnn_dim) for batch matmul
+    // Transpose logX to (batch, embed_dim, num_fields) for matmul
+    val logXT = logX.transpose(1, 2)  // (B, E, F)
+    // wT: (num_fields, lnn_dim) = (F, L)
     val wT = w.t()
-    val preAct = torch.bmm(logX, wT)  // (batch, embed_dim, lnn_dim)
-    val preActT = preAct.transpose(1, 2)  // (batch, lnn_dim, embed_dim)
+    // preAct: (batch, embed_dim, lnn_dim) = (B, E, L)
+    val preAct = torch.bmm(logXT, wT)
+    // preActT: (batch, lnn_dim, embed_dim) = (B, L, E)
+    val preActT = preAct.transpose(1, 2)
 
-    // Add bias
+    // Add bias: b.unsqueeze(0) gives (1, L, E), broadcasts to (B, L, E)
     val b = lnnBias.to(x.device(), ScalarType.Float)
     val bBcast = b.unsqueeze(0).expand(batchSize.toLong, lnnDim.toLong, embedDim.toLong)
     var out = preActT.add(bBcast)

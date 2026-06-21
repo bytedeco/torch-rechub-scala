@@ -66,10 +66,6 @@ class DSSM(
   }
 
   def userTowerForward(userFeats: Map[String, Tensor]): Tensor = {
-    // Debug: print input shapes
-    userFeats.foreach { case (k, v) =>
-      println(s"[DEBUG DSSM userTowerForward] $k: dim=${v.dim()}, shape=${v.sizes().vec().get().mkString(", ")}")
-    }
     // Extract sequence features from userFeats:
     // - 1D (batch,) -> sparse
     // - 2D (batch, 1) -> sparse

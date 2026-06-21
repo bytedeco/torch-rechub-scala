@@ -111,8 +111,10 @@ object CriteoExample {
         )
 
       case "deepfm" | "" =>
+        val halfIdx = allFeatures.size / 2
         new DeepFM(
-          features = allFeatures,
+          deepFeatures = allFeatures.take(halfIdx),
+          fmFeatures = allFeatures.drop(halfIdx),
           embedDim = embedDim,
           mlpDims = mlpDims,
           dropout = 0.2f,
@@ -153,24 +155,26 @@ object CriteoExample {
         )
 
       case "edcn" =>
+        val mlpParams = Map("dims" -> mlpDims, "activation" -> "relu", "dropout" -> 0.2f)
         new EDCN(
           features = allFeatures,
-          embedDim = embedDim,
-          numCrossLayers = 3,
-          mlpDims = mlpDims,
+          nCrossLayers = 3,
+          mlpParams = mlpParams,
           bridgeType = "add",
-          dropout = 0.2f,
+          useRegulationModule = true,
+          temperature = 1.0f,
           device = device
         )
 
       case "autoint" =>
         new AutoInt(
-          features = allFeatures,
+          sparseFeatures = allFeatures,
           embedDim = embedDim,
           numAttnHeads = 2,
           numLayers = 2,
           mlpDims = mlpDims,
           dropout = 0.2f,
+          useMlp = true,
           device = device
         )
 
@@ -233,8 +237,10 @@ object CriteoExample {
 
       case _ =>
         println(s"  Warning: Unknown model '$modelName', defaulting to DeepFM")
+        val halfIdx = allFeatures.size / 2
         new DeepFM(
-          features = allFeatures,
+          deepFeatures = allFeatures.take(halfIdx),
+          fmFeatures = allFeatures.drop(halfIdx),
           embedDim = embedDim,
           mlpDims = mlpDims,
           dropout = 0.2f,

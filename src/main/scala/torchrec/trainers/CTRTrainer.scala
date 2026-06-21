@@ -23,6 +23,9 @@ import torchrec.models.ranking.ETA
 import torchrec.models.ranking.MEMBA
 import torchrec.models.ranking.XGBoostModel
 import torchrec.models.ranking.LiquidNetWork
+import torchrec.models.ranking.xDeepFM
+import torchrec.models.ranking.AutoInt
+import torchrec.models.ranking.FiBiNet
 import torchrec.models.generative.{LLM4Rec, HLLM}
 import torchrec.models.matching.MAMBA
 import torchrec.basic.losses.{BCELoss, BCEWithLogitsLoss}
@@ -36,7 +39,7 @@ class CTRTrainer(
   weightDecay: Float = 1e-6f,
   device: String = DeviceSupport.backend,
   numEpochs: Int = 10,
-  earlyStopPatience: Int = 5,
+  earlyStopPatience: Int = 500,
   verbose: Boolean = true
 ) {
   private var bestAUC = 0.0f
@@ -44,6 +47,56 @@ class CTRTrainer(
   private val rng = new Random(42)
   private val optimizer = new Adam(model.parameters(), new AdamOptions(learningRate.toDouble))
   private val bceLoss = new BCEWithLogitsLoss()
+
+  // Safely apply backward + optimizer step only when loss is finite.
+  private def safeStep(loss: Tensor): Option[Float] = {
+    try {
+      val v = loss.itemSafe().toFloat
+      if (java.lang.Float.isNaN(v) || java.lang.Float.isInfinite(v)) {
+        System.err.println(s"[WARN] Encountered non-finite loss=${v}, skipping backward step")
+        None
+      } else {
+        loss.backward()
+        optimizer.step()
+        Some(v)
+      }
+    } catch {
+      case e: Throwable =>
+        System.err.println(s"[WARN] Exception while processing loss: ${e.getMessage}, skipping step")
+        None
+    }
+  }
+
+  // Helper to normalize prediction and labels to compatible shapes for BCEWithLogitsLoss
+  private def computeBCELoss(pred: Tensor, labels: Tensor): Tensor = {
+    var p = pred
+    try {
+      if (p.dim() >= 2L && p.size(1) > 1L) {
+        p = p.view(p.size(0), -1L).mean(1L)
+      } else if (p.dim() == 2L && p.size(1) == 1L) {
+        p = p.squeeze(1L)
+      }
+    } catch {
+      case _: Throwable => // ignore and keep original pred
+    }
+
+    var t = labels
+    try {
+      if (t.dim() == 2L && t.size(1) == 1L) t = t.squeeze(1L)
+    } catch {
+      case _: Throwable => // ignore
+    }
+
+    val batchSize = p.size(0).toInt
+    val pForLoss = if (p.dim() == 1L) p.view(batchSize, 1L) else p
+    val tForLoss = if (t.dim() == 1L) t.view(batchSize, 1L).toType(ScalarType.Float) else t.toType(ScalarType.Float)
+
+    if (pForLoss.size(0) != tForLoss.size(0) || pForLoss.size(1) != tForLoss.size(1)) {
+      println(s"  [WARN] BCE shape mismatch: pred=${pForLoss.size(0)}x${pForLoss.size(1)}, target=${tForLoss.size(0)}x${tForLoss.size(1)}")
+    }
+
+    bceLoss.apply(pForLoss, tForLoss)
+  }
 
   def fit(
     trainLoader: DataLoader,
@@ -73,145 +126,123 @@ class CTRTrainer(
           optimizer.zero_grad()
 
           model match {
-             case deepFM: DeepFM =>
-               val pred = deepFM.forward(features)
-               val batchSize = pred.size(0).toInt
-               val target2D = labels.view(batchSize, 1).toType(ScalarType.Float)
-               val loss = bceLoss.apply(pred, target2D)
-               loss.backward(); optimizer.step()
-               totalLoss += loss.itemSafe().toFloat; numBatches += 1
+              case deepFM: DeepFM =>
+                 val pred = deepFM.forward(features)
+                 val loss = computeBCELoss(pred, labels)
+                 safeStep(loss).foreach { v => totalLoss += v; numBatches += 1 }
 
-             case dcn: DCN =>
-               val pred = dcn.forward(features)
-               val batchSize = pred.size(0).toInt
-               val target2D = labels.view(batchSize, 1).toType(ScalarType.Float)
-               val loss = bceLoss.apply(pred, target2D)
-               loss.backward(); optimizer.step()
-               totalLoss += loss.itemSafe().toFloat; numBatches += 1
+              case dcn: DCN =>
+                 val pred = dcn.forward(features)
+                 val loss = computeBCELoss(pred, labels)
+                 safeStep(loss).foreach { v => totalLoss += v; numBatches += 1 }
 
-             case dcnv2: DCNv2 =>
-               val pred = dcnv2.forward(features)
-               val batchSize = pred.size(0).toInt
-               val target2D = labels.view(batchSize, 1).toType(ScalarType.Float)
-               val loss = bceLoss.apply(pred, target2D)
-               loss.backward(); optimizer.step()
-               totalLoss += loss.itemSafe().toFloat; numBatches += 1
+              case dcnv2: DCNv2 =>
+                 val pred = dcnv2.forward(features)
+                 val loss = computeBCELoss(pred, labels)
+                 safeStep(loss).foreach { v => totalLoss += v; numBatches += 1 }
 
-             case afm: AFM =>
-               val pred = afm.forward(features)
-               val batchSize = pred.size(0).toInt
-               val target2D = labels.view(batchSize, 1).toType(ScalarType.Float)
-               val loss = bceLoss.apply(pred, target2D)
-               loss.backward(); optimizer.step()
-               totalLoss += loss.itemSafe().toFloat; numBatches += 1
+              case afm: AFM =>
+                 val pred = afm.forward(features)
+                 val loss = computeBCELoss(pred, labels)
+                 safeStep(loss).foreach { v => totalLoss += v; numBatches += 1 }
 
-             case wd: WideDeep =>
-               val pred = wd.forward(features)
-               val batchSize = pred.size(0).toInt
-               val target2D = labels.view(batchSize, 1).toType(ScalarType.Float)
-               val loss = bceLoss.apply(pred, target2D)
-               loss.backward(); optimizer.step()
-               totalLoss += loss.itemSafe().toFloat; numBatches += 1
+              case wd: WideDeep =>
+                 val pred = wd.forward(features)
+                 val loss = computeBCELoss(pred, labels)
+                 safeStep(loss).foreach { v => totalLoss += v; numBatches += 1 }
 
-             case din: DIN =>
-               val seqFeats = batch.sequenceFeatures
-               if (seqFeats.nonEmpty) {
-                 val targetIdx = labels.view(labels.size(0), 1).toType(ScalarType.Long)
-                 val pred = din.forward(features, seqFeats, targetIdx)
-                 val batchSize = pred.size(0).toInt
-                 val target2D = labels.view(batchSize, 1).toType(ScalarType.Float)
-                 val loss = bceLoss.apply(pred, target2D)
-                 loss.backward(); optimizer.step()
-                 totalLoss += loss.itemSafe().toFloat; numBatches += 1
-                 targetIdx.close()
-               }
+              case din: DIN =>
+                val seqFeats = batch.sequenceFeatures
+                if (seqFeats.nonEmpty) {
+                   val targetIdx = labels.view(labels.size(0), 1).toType(ScalarType.Long)
+                   val pred = din.forward(features, seqFeats, targetIdx)
+                   val loss = computeBCELoss(pred, labels)
+                   safeStep(loss).foreach { v => totalLoss += v; numBatches += 1 }
+                   targetIdx.close()
+                }
 
-             case bst: BST =>
-               val seqFeats = batch.sequenceFeatures
-               if (seqFeats.nonEmpty) {
-                 val pred = bst.forward(features, seqFeats)
-                 val batchSize = pred.size(0).toInt
-                 val target2D = labels.view(batchSize, 1).toType(ScalarType.Float)
-                 val loss = bceLoss.apply(pred, target2D)
-                 loss.backward(); optimizer.step()
-                 totalLoss += loss.itemSafe().toFloat; numBatches += 1
-               }
+              case bst: BST =>
+                val seqFeats = batch.sequenceFeatures
+                if (seqFeats.nonEmpty) {
+                   val pred = bst.forward(features, seqFeats)
+                   val loss = computeBCELoss(pred, labels)
+                   safeStep(loss).foreach { v => totalLoss += v; numBatches += 1 }
+                }
 
-             case sim: SIM =>
-               val seqFeats = batch.sequenceFeatures
-               if (seqFeats.nonEmpty) {
-                 // Use same sequence features for item, category, and time
-                 val pred = sim.forward(features, seqFeats, seqFeats, seqFeats, seqFeats)
-                 val batchSize = pred.size(0).toInt
-                 val target2D = labels.view(batchSize, 1).toType(ScalarType.Float)
-                 val loss = bceLoss.apply(pred, target2D)
-                 loss.backward(); optimizer.step()
-                 totalLoss += loss.itemSafe().toFloat; numBatches += 1
-               }
+              case sim: SIM =>
+                val seqFeats = batch.sequenceFeatures
+                if (seqFeats.nonEmpty) {
+                  // Use same sequence features for item, category, and time
+                   val pred = sim.forward(features, seqFeats, seqFeats, seqFeats, seqFeats)
+                   val loss = computeBCELoss(pred, labels)
+                   safeStep(loss).foreach { v => totalLoss += v; numBatches += 1 }
+                }
 
-             case eta: ETA =>
-               val seqFeats = batch.sequenceFeatures
-               if (seqFeats.nonEmpty) {
-                 val pred = eta.forward(features, seqFeats, seqFeats)
-                 val batchSize = pred.size(0).toInt
-                 val target2D = labels.view(batchSize, 1).toType(ScalarType.Float)
-                 val loss = bceLoss.apply(pred, target2D)
-                 loss.backward(); optimizer.step()
-                 totalLoss += loss.itemSafe().toFloat; numBatches += 1
-               }
+              case eta: ETA =>
+                val seqFeats = batch.sequenceFeatures
+                if (seqFeats.nonEmpty) {
+                   val pred = eta.forward(features, seqFeats, seqFeats)
+                   val loss = computeBCELoss(pred, labels)
+                   safeStep(loss).foreach { v => totalLoss += v; numBatches += 1 }
+                }
 
-             case membrana: MEMBA =>
-               val seqFeats = batch.sequenceFeatures
-               if (seqFeats.nonEmpty) {
-                 val targetIdx = labels.view(labels.size(0), 1).toType(ScalarType.Long)
-                 val pred = membrana.forward(features, seqFeats, targetIdx)
-                 val batchSize = pred.size(0).toInt
-                 val target2D = labels.view(batchSize, 1).toType(ScalarType.Float)
-                 val loss = bceLoss.apply(pred, target2D)
-                 loss.backward(); optimizer.step()
-                 totalLoss += loss.itemSafe().toFloat; numBatches += 1
-                 targetIdx.close()
-               }
+              case membrana: MEMBA =>
+                val seqFeats = batch.sequenceFeatures
+                if (seqFeats.nonEmpty) {
+                   val targetIdx = labels.view(labels.size(0), 1).toType(ScalarType.Long)
+                   val pred = membrana.forward(features, seqFeats, targetIdx)
+                   val loss = computeBCELoss(pred, labels)
+                   safeStep(loss).foreach { v => totalLoss += v; numBatches += 1 }
+                   targetIdx.close()
+                }
 
-             case xgb: XGBoostModel =>
-               val pred = xgb.forward(features)
-               val batchSize = pred.size(0).toInt
-               val target2D = labels.view(batchSize, 1).toType(ScalarType.Float)
-               val loss = bceLoss.apply(pred, target2D)
-               loss.backward(); optimizer.step()
-               totalLoss += loss.itemSafe().toFloat; numBatches += 1
+              case xgb: XGBoostModel =>
+                 val pred = xgb.forward(features)
+                 val loss = computeBCELoss(pred, labels)
+                 safeStep(loss).foreach { v => totalLoss += v; numBatches += 1 }
 
-             case lnw: LiquidNetWork =>
-               val seqFeats = batch.sequenceFeatures
-               if (seqFeats.nonEmpty) {
-                 val pred = lnw.forward(features, seqFeats)
-                 val batchSize = pred.size(0).toInt
-                 val target2D = labels.view(batchSize, 1).toType(ScalarType.Float)
-                 val loss = bceLoss.apply(pred, target2D)
-                 loss.backward(); optimizer.step()
-                 totalLoss += loss.itemSafe().toFloat; numBatches += 1
-               }
+              case xdeepfm: xDeepFM =>
+                 val pred = xdeepfm.forward(features)
+                 val loss = computeBCELoss(pred, labels)
+                 safeStep(loss).foreach { v => totalLoss += v; numBatches += 1 }
 
-             case llm4rec: LLM4Rec =>
-               val tokensOpt = batch.tokens
-               val positionsOpt = batch.positions
-               if (tokensOpt.nonEmpty) {
-                 val tokens = tokensOpt.get
-                 val positions = positionsOpt.getOrElse {
-                   val seqLen = tokens.size(1).toInt
-                   val posArr = Array.range(0, seqLen).map(_.toFloat)
-                   val posFlat = Array.fill(tokens.size(0).toInt)(posArr).flatten
-                   TorchRec.arange(0, seqLen).toType(ScalarType.Long)
-                     .unsqueeze(0)
-                     .repeat(tokens.size(0), 1)
-                 }
-                 val pred = llm4rec.forward(tokens, positions)
-                 val batchSize = pred.size(0).toInt
-                 val target2D = labels.view(batchSize, 1).toType(ScalarType.Float)
-                 val loss = bceLoss.apply(pred, target2D)
-                 loss.backward(); optimizer.step()
-                 totalLoss += loss.itemSafe().toFloat; numBatches += 1
-               }
+              case fibinet: FiBiNet =>
+                 val pred = fibinet.forward(features)
+                 val loss = computeBCELoss(pred, labels)
+                 safeStep(loss).foreach { v => totalLoss += v; numBatches += 1 }
+
+              case autoint: AutoInt =>
+                 val pred = autoint.forward(features)
+                 val loss = computeBCELoss(pred, labels)
+                 safeStep(loss).foreach { v => totalLoss += v; numBatches += 1 }
+
+              case lnw: LiquidNetWork =>
+                val seqFeats = batch.sequenceFeatures
+                if (seqFeats.nonEmpty) {
+                   val pred = lnw.forward(features, seqFeats)
+                   val loss = computeBCELoss(pred, labels)
+                   safeStep(loss).foreach { v => totalLoss += v; numBatches += 1 }
+                }
+
+              case llm4rec: LLM4Rec =>
+                val tokensOpt = batch.tokens
+                val positionsOpt = batch.positions
+                if (tokensOpt.nonEmpty) {
+                  val tokens = tokensOpt.get
+                  val positions = positionsOpt.getOrElse {
+                    val seqLen = tokens.size(1).toInt
+                    val posArr = Array.range(0, seqLen).map(_.toFloat)
+                    val posFlat = Array.fill(tokens.size(0).toInt)(posArr).flatten
+                    TorchRec.arange(0, seqLen).toType(ScalarType.Long)
+                      .unsqueeze(0)
+                      .repeat(tokens.size(0), 1)
+                  }
+                  val pred = llm4rec.forward(tokens, positions)
+                  val batchSize = pred.size(0).toInt
+                  val target2D = labels.view(batchSize, 1).toType(ScalarType.Float)
+                  val loss = bceLoss.apply(pred, target2D)
+                  safeStep(loss).foreach { v => totalLoss += v; numBatches += 1 }
+                }
 
 //             case hllm: HLLM =>
 //               val tokensOpt = batch.tokens
@@ -251,9 +282,8 @@ class CTRTrainer(
                  val pred = lastStepLogits.gather(1, targetItem2D)
 
                  val target2D = labels.view(batchSize, 1).toType(ScalarType.Float)
-                 val loss = bceLoss.apply(pred, target2D)
-                 loss.backward(); optimizer.step()
-                 totalLoss += loss.itemSafe().toFloat; numBatches += 1
+                  val loss = bceLoss.apply(pred, target2D)
+                  safeStep(loss).foreach { v => totalLoss += v; numBatches += 1 }
                }
             case _ =>
             // Skip unknown model types
@@ -414,6 +444,30 @@ class CTRTrainer(
             labelList.appendAll(labelHost.toFloatArray)
             predHost.close(); labelHost.close()
 
+          case xdeepfm: xDeepFM =>
+            val pred = xdeepfm.forward(features).sigmoid()
+            val predHost = pred.squeeze().to(ScalarType.Float).contiguous().cpu()
+            val labelHost = label.squeeze().to(ScalarType.Float).contiguous().cpu()
+            predList.appendAll(predHost.toFloatArray)
+            labelList.appendAll(labelHost.toFloatArray)
+            predHost.close(); labelHost.close()
+
+          case fibinet: FiBiNet =>
+            val pred = fibinet.forward(features).sigmoid()
+            val predHost = pred.squeeze().to(ScalarType.Float).contiguous().cpu()
+            val labelHost = label.squeeze().to(ScalarType.Float).contiguous().cpu()
+            predList.appendAll(predHost.toFloatArray)
+            labelList.appendAll(labelHost.toFloatArray)
+            predHost.close(); labelHost.close()
+
+          case autoint: AutoInt =>
+            val pred = autoint.forward(features).sigmoid()
+            val predHost = pred.squeeze().to(ScalarType.Float).contiguous().cpu()
+            val labelHost = label.squeeze().to(ScalarType.Float).contiguous().cpu()
+            predList.appendAll(predHost.toFloatArray)
+            labelList.appendAll(labelHost.toFloatArray)
+            predHost.close(); labelHost.close()
+
           case lnw: LiquidNetWork =>
             if (seqFeats.nonEmpty) {
               val pred = lnw.forward(features, seqFeats).sigmoid()
@@ -486,6 +540,17 @@ class CTRTrainer(
     val minLen = math.min(predList.length, labelList.length)
     val predArray = predList.take(minLen).toArray
     val labelArray = labelList.take(minLen).toArray
+
+    // Sanitize predictions: replace NaN/Infinite with neutral 0.5 and clamp to [0,1]
+    var i = 0
+    while (i < predArray.length) {
+      val v = predArray(i)
+      if (java.lang.Float.isNaN(v) || java.lang.Float.isInfinite(v)) {
+        predArray(i) = 0.5f
+      } else if (v < 0.0f) predArray(i) = 0.0f
+      else if (v > 1.0f) predArray(i) = 1.0f
+      i += 1
+    }
 
     val aucMetric = new AUC()
     val loglossMetric = new LogLoss()

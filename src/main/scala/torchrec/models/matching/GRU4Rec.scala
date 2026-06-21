@@ -54,6 +54,10 @@ class GRU4Rec(
   // =========================================================================
   private val userDims: Int = (userFeatures ++ historyFeatures).map(_.embedDim).sum
   private val historyDim: Int = historyFeatures.head.embedDim
+  // Keep a list of history sequence feature names for runtime checks
+  private val historyFeatureNames: List[String] = historyFeatures.map(_.name)
+  private val userFeatureNames: Set[String] = userFeatures.map(_.name).toSet
+  private val itemFeatureNames: Set[String] = itemFeatures.map(_.name).toSet
   private val numLayers: Int = userParams.getOrElse("num_layers", 2).asInstanceOf[Int]
 
   // =========================================================================
@@ -116,28 +120,51 @@ class GRU4Rec(
   // =========================================================================
   // User tower: encodes user features + history into user embedding
   // =========================================================================
+  /**
+   * User tower expecting a combined map. For backward compatibility we
+   * split the incoming map into sparse features and sequence features
+   * based on known history feature names and delegate to the two-arg
+   * implementation.
+   */
   def userTower(x: Map[String, Tensor]): Tensor = {
+    // split x into sparse and sequence maps
+    val (seqMap, sparseMap) = x.partition { case (k, _) => historyFeatureNames.contains(k) }
+    // seqMap contains sequence features, sparseMap contains others
+    userTower(sparseMap, seqMap)
+  }
+
+  /**
+   * New userTower that accepts sparse features and sequence features separately.
+   * This avoids passing sequence tensors as sparse features which previously
+   * caused embedding table lookup mistakes.
+   */
+  def userTower(sparseFeats: Map[String, Tensor], sequenceFeats: Map[String, Tensor]): Tensor = {
     if (mode.contains("item")) {
       val zero = torch.zeros(Array(1L, historyDim.toLong), new TensorOptions().dtype(new ScalarTypeOptional(ScalarType.Float)))
       return zero
     }
 
+    // Filter incoming maps to only the features this model was constructed with.
+    val filteredSparse = sparseFeats.filter { case (k, _) => userFeatureNames.contains(k) }
     // Get user feature embeddings: [batch_size, user_dims]
     val userEmb = embedding.forward(
-      sparseFeats = x,
+      sparseFeats = filteredSparse,
       sequenceFeats = Map(),
       squeeze = true
     )
 
-    // Get history sequence embeddings: [batch_size, seq_len, history_dim]
-    val historyEmb = embedding.forward(
-      sparseFeats = Map(),
-      sequenceFeats = x,
-      squeeze = false
-    )
+    // Get history sequence embeddings raw (no pooling) so we obtain [batch, seq_len, history_dim]
+    val seqFiltered = sequenceFeats.filter { case (k, _) => historyFeatureNames.contains(k) }
+    val rawSeq = embedding.forwardSeqRaw(seqFiltered)
+    val historyEmb = if (rawSeq.dim() == 4L) {
+      // rawSeq: (batch, num_features, seqLen, embedDim) -> expect single seq feature -> squeeze field dim
+      rawSeq.squeeze(1L)
+    } else {
+      // already (batch, seqLen, embedDim)
+      rawSeq
+    }
 
     // Pass through GRU: take only the last hidden state
-    // Python: _, history_emb = self.gru(history_emb); history_emb = history_emb[-1]
     val gruOutput = gru.forward(historyEmb)
     val gruHidden = gruOutput.get1 // hidden state tensor
     val lastHidden = gruHidden.select(0, numLayers - 1) // hidden[-1]

@@ -130,6 +130,7 @@ case class Batch(
   targets: Option[Tensor] = None,
   // Two-tower matching fields
   itemFeatures: Map[String, Tensor] = Map.empty,
+  negItemFeatures: Option[Map[String, Tensor]] = None,
   // Multi-task fields
   taskLabels: Option[Map[String, Tensor]] = None
 ) {
@@ -146,6 +147,7 @@ case class Batch(
       timeDiffs.map(move),
       targets.map(move),
       itemFeatures.map { case (k, v) => k -> move(v) },
+      negItemFeatures.map(_.map { case (k, v) => k -> move(v) }),
       taskLabels.map(_.map { case (k, v) => k -> move(v) })
     )
   }
@@ -381,7 +383,9 @@ class MatchingDataset(
       positions.map(_.select(0, index).contiguous().clone()),
       None,
       None,
-      itemFeatures.map { case (k, v) => k -> safeNarrow(v, index) }
+      itemFeatures.map { case (k, v) => k -> safeNarrow(v, index) },
+      negItemFeatures.map(m => m.map { case (k, v) => k -> safeNarrow(v, index) }),
+      None
     )
   }
 

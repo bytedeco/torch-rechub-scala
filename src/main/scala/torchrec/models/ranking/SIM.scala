@@ -2,10 +2,9 @@ package torchrec.models.ranking
 
 import torchrec.basic.features._
 import torchrec.basic.layers._
-import torchrec.Implicits._
+import torchrec.Implicits.SeqTensorRichSeq
 import torchrec.utils.DeviceSupport
 
-import scala.collection.mutable
 
 import org.bytedeco.pytorch._
 import org.bytedeco.pytorch.global.torch
@@ -81,6 +80,46 @@ class SIM(
   private val mlp = new MLP(totalDim, mlpDims, 1, "relu", dropout, device = device)
   register_module("mlp", mlp)
 
+  private def normalizeSequenceEmb(raw: Tensor, batchSize: Int, seqLen: Int): Tensor = {
+    if (raw.dim() == 4L && raw.size(1) == 1L) {
+      raw.squeeze(1L)
+    } else if (raw.dim() == 3L) {
+      raw
+    } else if (raw.dim() == 2L) {
+      val total = raw.size(1)
+      val expected = batchSize.toLong * seqLen.toLong * embedDim.toLong
+      if (seqLen > 0 && total == seqLen.toLong * embedDim.toLong) {
+        raw.view(batchSize.toLong, seqLen.toLong, embedDim.toLong)
+      } else if (seqLen > 0 && raw.numel() == expected) {
+        raw.view(batchSize.toLong, seqLen.toLong, embedDim.toLong)
+      } else if (total == embedDim.toLong) {
+        raw.unsqueeze(1L)
+      } else {
+        raw
+      }
+    } else {
+      raw
+    }
+  }
+
+  private def normalizeTargetEmb(raw: Tensor, batchSize: Int): Tensor = {
+    if (raw.dim() == 3L && raw.size(1) == 1L) {
+      raw.squeeze(1L)
+    } else if (raw.dim() == 2L) {
+      if (raw.size(1) == embedDim.toLong) raw else if (raw.numel() == batchSize.toLong * embedDim.toLong) raw.view(batchSize.toLong, embedDim.toLong) else raw
+    } else {
+      raw
+    }
+  }
+
+  private def safeSequenceEmbedding(layer: EmbeddingLayer, name: String, indices: Tensor, batchSize: Int): Tensor = {
+    val raw = layer.getSequenceEmbedding(name, indices)
+    if (raw.dim() == 3L) raw
+    else if (raw.dim() == 2L && raw.size(1) == embedDim.toLong) raw.unsqueeze(1L)
+    else if (raw.dim() == 2L && raw.numel() == batchSize.toLong * indices.size(1) * embedDim.toLong) raw.view(batchSize.toLong, indices.size(1), embedDim.toLong)
+    else raw
+  }
+
   def forward(
     sparseFeats: Map[String, Tensor],
     seqFeats: Map[String, Tensor],
@@ -92,49 +131,64 @@ class SIM(
     val featEmb = featureEmbedding.forward(sparseFeats)
 
     // Get target embeddings for attention: (batch, 1, embed_dim)
-    val targetEmb = seqEmbedding.forward(targetFeats)
+    val batchSize = seqFeats.values.headOption.map(_.size(0)).orElse(targetFeats.values.headOption.map(_.size(0))).getOrElse(1L).toInt
+    val targetRaw = targetFeats.headOption match {
+      case Some((name, tensor)) => seqEmbedding.getSequenceEmbedding(name, tensor)
+      case None => throw new IllegalArgumentException("targetFeats cannot be empty")
+    }
+    val targetEmb = normalizeTargetEmb(targetRaw, batchSize)
 
     // Get sequence embeddings: (batch, seq_len, embed_dim)
     val seqEmbs = seqFeatures.map { f =>
-      seqEmbedding.getEmbedding(f.name, seqFeats(f.name))
+      // use sequence-specific API
+      normalizeSequenceEmb(safeSequenceEmbedding(seqEmbedding, f.name, seqFeats(f.name), batchSize), batchSize, seqFeats(f.name).size(1).toInt)
     }
     val seqEmb = if (seqEmbs.length == 1) seqEmbs.head else {
-      val vec = new TensorVector(seqEmbs.size.toLong)
+      val vec = new TensorVector()
       seqEmbs.foreach(vec.push_back)
       torch.cat(vec, 1)
     }
 
     // Get category embeddings for filtering: (batch, seq_len, embed_dim)
     val cateEmbs = cateFeatures.map { f =>
-      cateEmbedding.getEmbedding(f.name, cateFeats(f.name))
+      cateEmbedding.getSequenceEmbedding(f.name, cateFeats(f.name))
     }
     val cateEmb = if (cateEmbs.length == 1) cateEmbs.head else {
-      val vec = new TensorVector(cateEmbs.size.toLong)
+      val vec = new TensorVector()
       cateEmbs.foreach(vec.push_back)
       torch.cat(vec, 1)
     }
 
     // Get time embeddings: (batch, seq_len, embed_dim)
     val timeEmbs = timeFeatures.map { f =>
-      timeEmbedding.getEmbedding(f.name, timeFeats(f.name))
+      normalizeSequenceEmb(safeSequenceEmbedding(timeEmbedding, f.name, timeFeats(f.name), batchSize), batchSize, timeFeats(f.name).size(1).toInt)
     }
     val timeEmb = if (timeEmbs.length == 1) timeEmbs.head else {
-      val vec = new TensorVector(timeEmbs.size.toLong)
+      val vec = new TensorVector()
       timeEmbs.foreach(vec.push_back)
       torch.cat(vec, 1)
     }
 
-    val batchSize = seqEmb.size(0).toInt
     val seqLen = seqEmb.size(1).toInt
 
     // Target item + time embedding for matching
     val targetExpanded = targetEmb.unsqueeze(1).repeat(1, seqLen, 1)
 
     // Cat target item and time for matching: (batch, seq_len, embed_dim * 2)
-    val targetCatTime = torch.cat(new TensorVector(targetExpanded, timeEmb), 2)
+    val targetCatTime = {
+      val vec = new TensorVector()
+      vec.push_back(targetExpanded)
+      vec.push_back(timeEmb)
+      torch.cat(vec, 2)
+    }
 
     // Concatenate item and category for filtering: (batch, seq_len, embed_dim * 2)
-    val seqCatCate = torch.cat(new TensorVector(seqEmb, cateEmb), 2)
+    val seqCatCate = {
+      val vec = new TensorVector()
+      vec.push_back(seqEmb)
+      vec.push_back(cateEmb)
+      torch.cat(vec, 2)
+    }
 
     // Apply category-based filtering
     val filteredSeq = if (mode == "hard") {
@@ -151,7 +205,12 @@ class SIM(
     val attendedSeq = applyAttention(filteredSeq, targetExpanded, batchSize, seqLen)
 
     // Combine sparse features with attended sequence
-    val combined = torch.cat(Seq(featEmb, attendedSeq).toTensorVector, 1)
+    val combined = {
+      val vec = new TensorVector()
+      vec.push_back(featEmb)
+      vec.push_back(attendedSeq)
+      torch.cat(vec, 1L)
+    }
 
     // MLP prediction
     val logits = mlp.forward(combined)

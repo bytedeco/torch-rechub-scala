@@ -9,106 +9,92 @@ import org.bytedeco.pytorch.global.torch
 
 /**
  * AutoInt: Automatic Feature Interaction via Attentive Multi-Head Self-Attention
- * Reference: RecSys 2019
+ * Reference: CIKM 2019
  */
 class AutoInt(
-  features: List[Feature],
+  sparseFeatures: List[Feature],
   embedDim: Int = 8,
   numAttnHeads: Int = 2,
-  numLayers: Int = 2,
+  numLayers: Int = 3,
   mlpDims: List[Long] = List(128L, 64L),
-  dropout: Float = 0.2f,
+  dropout: Float = 0.0f,
+  useMlp: Boolean = true,
   device: String = DeviceSupport.backend
 ) extends Module {
 
-  private val embeddingLayer = new EmbeddingLayer(features, embedDim, device)
+  private val numSparseFeatures = sparseFeatures.size
+
+  // Dense feature embeddings: Linear(1, embed_dim) per dense feature
+  // Note: dense features are passed separately and projected
+  private val numDenseFeatures = 0  // Dense features handled via separate projection
+
+  // Total dims = (numSparse + numDense) * embed_dim
+  private val dims = numSparseFeatures * embedDim
+
+  // Sparse embedding layer
+  private val embeddingLayer = new EmbeddingLayer(sparseFeatures, embedDim, device)
   register_module("embedding", embeddingLayer)
 
-  private val numFields = features.collect { case f: SparseFeature => 1 }.size
-
-  // Multi-head self-attention layers
-  private val attentionLayers = (0 until numLayers).map { i =>
-    val layer = new MultiHeadSelfAttention(embedDim, numAttnHeads, dropout, device)
-    register_module(s"attention_$i", layer)
+  // Multi-head self-attention interacting layers
+  private val interactingLayers = (0 until numLayers).map { i =>
+    val layer = new InteractingLayer(embedDim, numAttnHeads, dropout, residual = true, device)
+    register_module(s"interacting_$i", layer)
     layer
   }
 
-  // MLP
-  private val mlp = new MLP(numFields * embedDim, mlpDims.map(_.toLong), 1, "relu", dropout, device = device)
-  register_module("mlp", mlp)
+  // Linear (LR) component for first-order interactions
+  private val linear = new LR(dims, sigmoid = false, device)
+  register_module("linear", linear)
+
+  // Attention pooling linear: projects attention output to a scalar
+  private val attnLinear = new LinearImpl(dims, 1)
+  attnLinear.to(new org.bytedeco.pytorch.Device(device), false)
+  register_module("attn_linear", attnLinear)
+
+  // MLP for deep interactions
+  private val mlp = if (useMlp) {
+    val m = new MLP(dims, mlpDims.map(_.toLong), 1, "relu", dropout, device = device)
+    register_module("mlp", m)
+    Some(m)
+  } else None
 
   def forward(
     sparseFeats: Map[String, Tensor],
     denseFeats: Map[String, Tensor] = Map.empty
   ): Tensor = {
-    val embeddings = embeddingLayer.forward(sparseFeats)
-    // Reshape to (batch, num_fields, embed_dim)
-    val batchSize = embeddings.size(0)
-    val reshaped = embeddings.view(batchSize, numFields, embedDim)
+    // Get sparse embeddings using forward3D: (batch, numSparse, embedDim)
+    val sparseEmb = embeddingLayer.forward3D(sparseFeats)
 
-    // Apply attention layers
-    var output = reshaped
-    attentionLayers.foreach { attn =>
-      output = attn.forward(output).add(output)  // Residual connection
+    // Handle dense features: each dense feature projected via Linear(1, embed_dim)
+    // If no dense features, just use sparseEmb
+    val embeddings = sparseEmb  // (batch, numSparse, embedDim)
+
+    // Flatten for linear component
+    val embeddingsFlat = embeddings.view(embeddings.size(0), -1)  // (batch, dims)
+
+    // Apply interacting layers (multi-head self-attention with residual)
+    var attnOut = embeddings
+    interactingLayers.foreach { layer =>
+      attnOut = layer.forward(attnOut)  // Each layer: residual connection inside
     }
 
-    // Flatten and MLP
-    val flattened = output.flatten(1, 2)
-    val logits = mlp.forward(flattened)
-    logits
-  }
-}
+    // Attention linear: flatten attention output and project
+    val attnOutFlat = attnOut.view(attnOut.size(0), -1)  // (batch, dims)
+    val yAttn = attnLinear.forward(attnOutFlat)  // (batch, 1)
 
-/**
- * Multi-Head Self-Attention
- */
-class MultiHeadSelfAttention(
-  embedDim: Int,
-  numHeads: Int,
-  dropout: Float = 0.2f,
-  device: String = DeviceSupport.backend
-) extends Module {
+    // Linear component
+    val yLinear = linear.forward(embeddingsFlat)  // (batch, 1)
 
-  require(embedDim % numHeads == 0, s"embedDim must be divisible by numHeads")
-  private val headDim = embedDim / numHeads
+    // Combine attention and linear
+    var y = yAttn.add(yLinear)
 
-  private val query = new LinearImpl(embedDim, embedDim)
-  private val key = new LinearImpl(embedDim, embedDim)
-  private val value = new LinearImpl(embedDim, embedDim)
-  private val output = new LinearImpl(embedDim, embedDim)
-  private val dropoutLayer = new DropoutImpl(dropout)
+    // Add MLP contribution if enabled
+    if (mlp.isDefined) {
+      val yDeep = mlp.get.forward(embeddingsFlat)  // (batch, 1)
+      y = y.add(yDeep)
+    }
 
-  register_module("query", query)
-  register_module("key", key)
-  register_module("value", value)
-  register_module("output", output)
-
-  if (device != "cpu") {
-    val dev = new org.bytedeco.pytorch.Device(device)
-    query.to(dev, false)
-    key.to(dev, false)
-    value.to(dev, false)
-    output.to(dev, false)
-    dropoutLayer.to(dev, false)
-  }
-
-  def forward(x: Tensor): Tensor = {
-    // x: (batch, num_fields, embed_dim)
-    val batchSize = x.size(0)
-    val numFields = x.size(1)
-
-    val q = query.forward(x).view(batchSize, numFields, numHeads, headDim).transpose(1, 2)
-    val k = key.forward(x).view(batchSize, numFields, numHeads, headDim).transpose(1, 2)
-    val v = value.forward(x).view(batchSize, numFields, numHeads, headDim).transpose(1, 2)
-
-    // Scaled dot-product attention
-    val scale = new Scalar(scala.math.sqrt(headDim.toFloat).toFloat)
-    val scores = torch.matmul(q, k.transpose(2, 3)).div(scale)
-    val attnWeights = scores.softmax(-1)
-    val attended = torch.matmul(dropoutLayer.forward(attnWeights), v)
-
-    // Reshape back
-    val reshaped = attended.transpose(1, 2).contiguous().view(batchSize, numFields, embedDim)
-    output.forward(reshaped)
+    // Return (batch, 1) - don't squeeze to avoid BCEWithLogitsLoss shape mismatch
+    y
   }
 }

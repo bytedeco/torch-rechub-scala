@@ -45,7 +45,8 @@ class YoutubeDNN(
   ): Tensor = {
     val featEmb = featureEmbedding.forward(features)
     val seqEmbs = sequenceFeatures.map { case (name, indices) =>
-      sequenceEmbedding.getEmbedding(name, indices)
+      // sequenceEmbedding stores sequence tables under "embed_seq_<name>"
+      sequenceEmbedding.getSequenceEmbedding(name, indices)
     }.toSeq
     val seqPooled = if (seqEmbs.nonEmpty) {
       seqEmbs.cat(1).mean(1)
