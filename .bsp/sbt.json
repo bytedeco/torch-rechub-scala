@@ -1,1 +1,1 @@
-{"name":"sbt","version":"2.0.0-RC13","bspVersion":"2.1.0-M1","languages":["scala"],"argv":["/usr/bin/sbt","bsp"]}
+{"name":"sbt","version":"2.0.1","bspVersion":"2.1.0-M1","languages":["scala"],"argv":["/opt/homebrew/bin/sbt","bsp"]}

@@ -1,6 +1,15 @@
 package torchrec.models.knowledge_tracing
 
 import org.bytedeco.pytorch.*
+import org.bytedeco.pytorch.nn.Module
+import org.bytedeco.pytorch.nn.modules._
+import org.bytedeco.pytorch.nn.modules.container._
+import org.bytedeco.pytorch.nn.options._
+import org.bytedeco.pytorch.optim._
+import org.bytedeco.pytorch.data.datasets._
+import org.bytedeco.pytorch.data.options._
+import org.bytedeco.pytorch.data.sampler._
+import org.bytedeco.pytorch.distributed._
 import org.bytedeco.pytorch.global.torch
 import org.bytedeco.pytorch.global.torch.ScalarType
 import torchrec.Implicits.*
@@ -57,7 +66,7 @@ class DKT(
    * @param responses   Responses 0/1 (batch, seqLen)
    * @return Predictions (batch, seqLen, numConcepts) - probability of correct response for each concept
    */
-  def forward(conceptIds: Tensor, responses: Tensor): Tensor = {
+  override def forward(conceptIds: Tensor, responses: Tensor): Tensor = {
     val batchSize = conceptIds.size(0).toInt
     val seqLen = conceptIds.size(1).toInt
 
@@ -65,7 +74,7 @@ class DKT(
     val interactionEmbOut = interactionEmb.forward(conceptIds, responses)
 
     // LSTM forward
-    val lstmOut = lstm.forward(interactionEmbOut).get0()
+    val lstmOut = lstm.forwardT_TensorTensor_T(interactionEmbOut).get0()
 
     // Apply dropout
     val dropped = dropoutLayer.forward(lstmOut)
@@ -131,9 +140,9 @@ class DKTPlus(
     outputLayer.to(dev, false)
   }
 
-  def forward(conceptIds: Tensor, responses: Tensor): Tensor = {
+  override def forward(conceptIds: Tensor, responses: Tensor): Tensor = {
     val interactionEmbOut = interactionEmb.forward(conceptIds, responses)
-    val lstmOut = lstm.forward(interactionEmbOut).get0()
+    val lstmOut = lstm.forwardT_TensorTensor_T(interactionEmbOut).get0()
     val dropped = dropoutLayer.forward(lstmOut)
     outputLayer.forward(dropped)
   }

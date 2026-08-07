@@ -3,6 +3,15 @@ package torchrec.dataframe
 import torchrec.data._
 import torchrec.Implicits.tensor
 import org.bytedeco.pytorch._
+import org.bytedeco.pytorch.nn.Module
+import org.bytedeco.pytorch.nn.modules._
+import org.bytedeco.pytorch.nn.modules.container._
+import org.bytedeco.pytorch.nn.options._
+import org.bytedeco.pytorch.optim._
+import org.bytedeco.pytorch.data.datasets._
+import org.bytedeco.pytorch.data.options._
+import org.bytedeco.pytorch.data.sampler._
+import org.bytedeco.pytorch.distributed._
 import org.bytedeco.pytorch.global.torch.ScalarType
 
 import scala.collection.mutable

@@ -1,6 +1,15 @@
 package torchrec.models.generative
 
 import org.bytedeco.pytorch._
+import org.bytedeco.pytorch.nn.Module
+import org.bytedeco.pytorch.nn.modules._
+import org.bytedeco.pytorch.nn.modules.container._
+import org.bytedeco.pytorch.nn.options._
+import org.bytedeco.pytorch.optim._
+import org.bytedeco.pytorch.data.datasets._
+import org.bytedeco.pytorch.data.options._
+import org.bytedeco.pytorch.data.sampler._
+import org.bytedeco.pytorch.distributed._
 import org.bytedeco.pytorch.global.torch
 import org.bytedeco.pytorch.global.torch.ScalarType
 import torchrec.utils.DeviceSupport
@@ -84,7 +93,7 @@ class LLM4Rec(
   // ===========================================================================
   // FORWARD
   // ===========================================================================
-  def forward(seqTokens: Tensor, positions: Tensor): Tensor = {
+  override def forward(seqTokens: Tensor, positions: Tensor): Tensor = {
     val batchSize = seqTokens.size(0)
     val dev = seqTokens.device()
 
@@ -151,7 +160,7 @@ class LLM4RecEncoderLayer(
     norm2.train(on)
   }
 
-  def forward(x: Tensor): Tensor = {
+  override def forward(x: Tensor): Tensor = {
     val bs = x.size(0)
     val sl = x.size(1)
 
@@ -262,7 +271,7 @@ class LLM4RecEncoderLayer(
 //  // ===========================================================================
 //  // FORWARD —— 修复类型错误
 //  // ===========================================================================
-//  def forward(seqTokens: Tensor, positions: Tensor): Tensor = {
+//  override def forward(seqTokens: Tensor, positions: Tensor): Tensor = {
 //    val batchSize = seqTokens.size(0)
 //    val dev = seqTokens.device()
 //
@@ -346,7 +355,7 @@ class LLM4RecEncoderLayer(
 //  register_module("attnDropout", attnDropout)
 //  register_module("ffnDropout", ffnDropout)
 //
-//  def forward(x: Tensor): Tensor = {
+//  override def forward(x: Tensor): Tensor = {
 //    val bs = x.size(0)
 //    val sl = x.size(1)
 //
@@ -451,7 +460,7 @@ class LLM4RecEncoderLayer(
 //  // ===========================================================================
 //  // FORWARD
 //  // ===========================================================================
-//  def forward(seqTokens: Tensor, positions: Tensor): Tensor = {
+//  override def forward(seqTokens: Tensor, positions: Tensor): Tensor = {
 //    val batchSize = seqTokens.size(0)
 //    val dev = seqTokens.device()
 //
@@ -534,7 +543,7 @@ class LLM4RecEncoderLayer(
 //  register_module("attnDropout", attnDropout)
 //  register_module("ffnDropout", ffnDropout)
 //
-//  def forward(x: Tensor): Tensor = {
+//  override def forward(x: Tensor): Tensor = {
 //    val bs = x.size(0)
 //    val sl = x.size(1)
 //
@@ -635,7 +644,7 @@ class LLM4RecEncoderLayer(
 //  // ===========================================================================
 //  // FORWARD —— 所有临时张量自动使用输入张量的设备
 //  // ===========================================================================
-//  def forward(
+//  override def forward(
 //               seqTokens: Tensor,
 //               positions: Tensor
 //             ): Tensor = {
@@ -717,7 +726,7 @@ class LLM4RecEncoderLayer(
 //  register_module("attnDropout", attnDropout)
 //  register_module("ffnDropout", ffnDropout)
 //
-//  def forward(x: Tensor): Tensor = {
+//  override def forward(x: Tensor): Tensor = {
 //    val batchSize = x.size(0)
 //    val seqLen = x.size(1)
 //
@@ -855,7 +864,7 @@ class LLM4RecEncoderLayer(
 //    mlp.to(dev, false)
 //  }
 //
-//  def forward(
+//  override def forward(
 //    seqTokens: Tensor,   // (batch, seq_len) -- item IDs
 //    positions: Tensor    // (batch, seq_len) -- position indices
 //  ): Tensor = {
@@ -949,7 +958,7 @@ class LLM4RecEncoderLayer(
 //    norm2.to(dev, false)
 //  }
 //
-//  def forward(x: Tensor): Tensor = {
+//  override def forward(x: Tensor): Tensor = {
 //    // x: (batch, seq_len, embed_dim)
 //    val batchSize = x.size(0).toInt
 //    val seqLen = x.size(1).toInt

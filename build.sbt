@@ -1,7 +1,7 @@
 // torch-rechub-scala build.sbt
 // Scala 3 Recommendation System Framework using JavaCPP-PyTorch
 
-ThisBuild / scalaVersion := "3.8.3"
+ThisBuild / scalaVersion := "3.8.4"
 ThisBuild / version := "0.1.0"
 ThisBuild / organization := "torchrec"
 scalacOptions += "-experimental"
@@ -49,11 +49,12 @@ pomIncludeRepository := { _ => false }
 
 resolvers += "Central Portal Snapshots" at "https://central.sonatype.com/repository/maven-snapshots/"
 resolvers += "aliyun" at "https://maven.aliyun.com/repository/public"
+resolvers := Resolver.mavenLocal +: resolvers.value
 resolvers ++= Seq(
   Resolver.sonatypeCentralSnapshots,
   "aliyun-snapshot" at "https://maven.aliyun.com/repository/public"
 )
-updateOptions := updateOptions.value.withLatestSnapshots(true)
+updateOptions := updateOptions.value.withLatestSnapshots(false)
 resolvers += "aliyunmaven" at "https://maven.aliyun.com/repository/public"
 // Source: https://mvnrepository.com/artifact/com.lihaoyi/requests
 lazy val root = (project in file("."))
@@ -111,54 +112,57 @@ lazy val root = (project in file("."))
 
       // JavaCPP
       "org.bytedeco" % "javacpp" % "1.5.14-SNAPSHOT",
-      "org.bytedeco" % "javacpp" % "1.5.14-SNAPSHOT" classifier "linux-x86_64",
+      "org.bytedeco" % "javacpp" % "1.5.14-SNAPSHOT" classifier "macosx-arm64",
 
       // OpenBLAS
       "org.bytedeco" % "openblas" % "0.3.32-1.5.14-SNAPSHOT",
-      "org.bytedeco" % "openblas" % "0.3.32-1.5.14-SNAPSHOT" classifier "linux-x86_64",
+      "org.bytedeco" % "openblas" % "0.3.32-1.5.14-SNAPSHOT" classifier "macosx-arm64",
 
       // PyTorch
-      "org.bytedeco" % "pytorch" % "2.12.0-1.5.14-SNAPSHOT",
-      "org.bytedeco" % "pytorch" % "2.12.0-1.5.14-SNAPSHOT" classifier "linux-x86_64",
-
-      "org.bytedeco" % "pytorch-platform-gpu" %  "2.12.0-1.5.14-SNAPSHOT" excludeAll(
-        ExclusionRule("org.bytedeco", "cuda-platform"),
-        ExclusionRule("org.bytedeco", "javacpp-platform"),
-        ExclusionRule("org.bytedeco", "openblas-platform"),
-        //      ExclusionRule("org.bytedeco", "pytorch")//,"windows-x86_64" todo do not open ，or cuda not work！！！
-      ),
+      "org.bytedeco" % "pytorch" % "2.13.0-1.5.14-SNAPSHOT",
+      "org.bytedeco" % "pytorch" % "2.13.0-1.5.14-SNAPSHOT" classifier "macosx-arm64",
+      // Source: https://mvnrepository.com/artifact/org.lance/lance-core
+      "org.lance" % "lance-core" % "9.0.0-beta.18",
+      "org.apache.parquet" % "parquet-common" % "1.17.1",
+      "org.apache.parquet" % "parquet-column" % "1.17.1",
+//      "org.bytedeco" % "pytorch-platform-gpu" %  "2.12.0-1.5.14-SNAPSHOT" excludeAll(
+//        ExclusionRule("org.bytedeco", "cuda-platform"),
+//        ExclusionRule("org.bytedeco", "javacpp-platform"),
+//        ExclusionRule("org.bytedeco", "openblas-platform"),
+//        //      ExclusionRule("org.bytedeco", "pytorch")//,"windows-x86_64" todo do not open ，or cuda not work！！！
+//      ),
       // CUDA
-      "org.bytedeco" % "cuda" % "13.2-9.21-1.5.14-SNAPSHOT",
-      "org.bytedeco" % "cuda" % "13.2-9.21-1.5.14-SNAPSHOT" classifier "linux-x86_64",
-
-      "org.bytedeco" % "cuda-redist" % "13.2-9.21-1.5.14-SNAPSHOT",
-      "org.bytedeco" % "cuda-redist-cublas" % "13.2-9.21-1.5.14-SNAPSHOT",
-      "org.bytedeco" % "cuda-redist-cudnn" % "13.2-9.21-1.5.14-SNAPSHOT",
-      "org.bytedeco" % "cuda-redist-cusolver" % "13.2-9.21-1.5.14-SNAPSHOT",
-      "org.bytedeco" % "cuda-redist-cusparse" % "13.2-9.21-1.5.14-SNAPSHOT",
-      "org.bytedeco" % "cuda-redist-npp" % "13.2-9.21-1.5.14-SNAPSHOT",
-      "org.bytedeco" % "cuda-redist-nccl" % "13.2-9.21-1.5.14-SNAPSHOT",
-      "org.bytedeco" % "cuda-redist-nvcomp" % "13.2-9.21-1.5.14-SNAPSHOT",
-
-      "org.bytedeco" % "cuda-redist" % "13.2-9.21-1.5.14-SNAPSHOT" classifier "linux-x86_64",
-      "org.bytedeco" % "cuda-redist-cublas" % "13.2-9.21-1.5.14-SNAPSHOT" classifier "linux-x86_64",
-      "org.bytedeco" % "cuda-redist-cudnn" % "13.2-9.21-1.5.14-SNAPSHOT" classifier "linux-x86_64",
-      "org.bytedeco" % "cuda-redist-cusolver" % "13.2-9.21-1.5.14-SNAPSHOT" classifier "linux-x86_64",
-      "org.bytedeco" % "cuda-redist-cusparse" % "13.2-9.21-1.5.14-SNAPSHOT" classifier "linux-x86_64",
-      "org.bytedeco" % "cuda-redist-npp" % "13.2-9.21-1.5.14-SNAPSHOT" classifier "linux-x86_64",
-      "org.bytedeco" % "cuda-redist-nccl" % "13.2-9.21-1.5.14-SNAPSHOT" classifier "linux-x86_64",
-      "org.bytedeco" % "cuda-redist-nvcomp" % "13.2-9.21-1.5.14-SNAPSHOT" classifier "linux-x86_64",
-
+//      "org.bytedeco" % "cuda" % "13.2-9.21-1.5.14-SNAPSHOT",
+//      "org.bytedeco" % "cuda" % "13.2-9.21-1.5.14-SNAPSHOT" classifier "macosx-arm64",
+//
+//      "org.bytedeco" % "cuda-redist" % "13.2-9.21-1.5.14-SNAPSHOT",
+//      "org.bytedeco" % "cuda-redist-cublas" % "13.2-9.21-1.5.14-SNAPSHOT",
+//      "org.bytedeco" % "cuda-redist-cudnn" % "13.2-9.21-1.5.14-SNAPSHOT",
+//      "org.bytedeco" % "cuda-redist-cusolver" % "13.2-9.21-1.5.14-SNAPSHOT",
+//      "org.bytedeco" % "cuda-redist-cusparse" % "13.2-9.21-1.5.14-SNAPSHOT",
+//      "org.bytedeco" % "cuda-redist-npp" % "13.2-9.21-1.5.14-SNAPSHOT",
+//      "org.bytedeco" % "cuda-redist-nccl" % "13.2-9.21-1.5.14-SNAPSHOT",
+//      "org.bytedeco" % "cuda-redist-nvcomp" % "13.2-9.21-1.5.14-SNAPSHOT",
+//
+//      "org.bytedeco" % "cuda-redist" % "13.2-9.21-1.5.14-SNAPSHOT" classifier "macosx-arm64",
+//      "org.bytedeco" % "cuda-redist-cublas" % "13.2-9.21-1.5.14-SNAPSHOT" classifier "macosx-arm64",
+//      "org.bytedeco" % "cuda-redist-cudnn" % "13.2-9.21-1.5.14-SNAPSHOT" classifier "macosx-arm64",
+//      "org.bytedeco" % "cuda-redist-cusolver" % "13.2-9.21-1.5.14-SNAPSHOT" classifier "macosx-arm64",
+//      "org.bytedeco" % "cuda-redist-cusparse" % "13.2-9.21-1.5.14-SNAPSHOT" classifier "macosx-arm64",
+//      "org.bytedeco" % "cuda-redist-npp" % "13.2-9.21-1.5.14-SNAPSHOT" classifier "macosx-arm64",
+//      "org.bytedeco" % "cuda-redist-nccl" % "13.2-9.21-1.5.14-SNAPSHOT" classifier "macosx-arm64",
+//      "org.bytedeco" % "cuda-redist-nvcomp" % "13.2-9.21-1.5.14-SNAPSHOT" classifier "macosx-arm64",
+//
 
 
       // OpenCV
       "org.bytedeco" % "opencv" % "4.13.0-1.5.14-SNAPSHOT",
-      "org.bytedeco" % "opencv" % "4.13.0-1.5.14-SNAPSHOT" classifier "linux-x86_64",
+      "org.bytedeco" % "opencv" % "4.13.0-1.5.14-SNAPSHOT" classifier "macosx-arm64",
       //  "org.bytedeco" % "opencv-platform" % "4.13.0-1.5.14-SNAPSHOT",
 
       // FFmpeg
       "org.bytedeco" % "ffmpeg" % "8.1-1.5.14-SNAPSHOT",
-      "org.bytedeco" % "ffmpeg" % "8.1-1.5.14-SNAPSHOT" classifier "linux-x86_64",
+      "org.bytedeco" % "ffmpeg" % "8.1-1.5.14-SNAPSHOT" classifier "macosx-arm64",
       //  "org.bytedeco" % "ffmpeg-platform" % "8.1-1.5.14-SNAPSHOT"
       // Gson
       "com.google.code.gson" % "gson" % "2.14.0",
@@ -181,21 +185,21 @@ resolvers ++= Seq(
   Resolver.sonatypeCentralSnapshots,
   "aliyun-snapshot" at "https://maven.aliyun.com/repository/public"
 )
-updateOptions := updateOptions.value.withLatestSnapshots(true)
+updateOptions := updateOptions.value.withLatestSnapshots(false)
 resolvers += "aliyunmaven" at "https://maven.aliyun.com/repository/public"
 
 //libraryDependencies ++= Seq(
 //  // JavaCPP
 //  "org.bytedeco" % "javacpp" % "1.5.13",
-//  "org.bytedeco" % "javacpp" % "1.5.13" classifier "linux-x86_64",
+//  "org.bytedeco" % "javacpp" % "1.5.13" classifier "macosx-arm64",
 //
 //  // OpenBLAS
 //  "org.bytedeco" % "openblas" % "0.3.31-1.5.13",
-//  "org.bytedeco" % "openblas" % "0.3.31-1.5.13" classifier "linux-x86_64",
+//  "org.bytedeco" % "openblas" % "0.3.31-1.5.13" classifier "macosx-arm64",
 //
 //  // PyTorch
 //  "org.bytedeco" % "pytorch" % "2.10.0-1.5.13",
-//  "org.bytedeco" % "pytorch" % "2.10.0-1.5.13" classifier "linux-x86_64",
+//  "org.bytedeco" % "pytorch" % "2.10.0-1.5.13" classifier "macosx-arm64",
 //
 //  "org.bytedeco" % "pytorch-platform-gpu" % "2.10.0-1.5.13" excludeAll(
 //    ExclusionRule("org.bytedeco", "cuda-platform"),
@@ -205,7 +209,7 @@ resolvers += "aliyunmaven" at "https://maven.aliyun.com/repository/public"
 //
 //  // CUDA
 //  "org.bytedeco" % "cuda" % "13.1-9.19-1.5.13",
-//  "org.bytedeco" % "cuda" % "13.1-9.19-1.5.13" classifier "linux-x86_64",
+//  "org.bytedeco" % "cuda" % "13.1-9.19-1.5.13" classifier "macosx-arm64",
 //
 //  "org.bytedeco" % "cuda-redist" % "13.1-9.19-1.5.13",
 //  "org.bytedeco" % "cuda-redist-cublas" % "13.1-9.19-1.5.13",
@@ -216,22 +220,22 @@ resolvers += "aliyunmaven" at "https://maven.aliyun.com/repository/public"
 //  "org.bytedeco" % "cuda-redist-nccl" % "13.1-9.19-1.5.13",
 //  "org.bytedeco" % "cuda-redist-nvcomp" % "13.1-9.19-1.5.13",
 //
-//  "org.bytedeco" % "cuda-redist" % "13.1-9.19-1.5.13" classifier "linux-x86_64",
-//  "org.bytedeco" % "cuda-redist-cublas" % "13.1-9.19-1.5.13" classifier "linux-x86_64",
-//  "org.bytedeco" % "cuda-redist-cudnn" % "13.1-9.19-1.5.13" classifier "linux-x86_64",
-//  "org.bytedeco" % "cuda-redist-cusolver" % "13.1-9.19-1.5.13" classifier "linux-x86_64",
-//  "org.bytedeco" % "cuda-redist-cusparse" % "13.1-9.19-1.5.13" classifier "linux-x86_64",
-//  "org.bytedeco" % "cuda-redist-npp" % "13.1-9.19-1.5.13" classifier "linux-x86_64",
-//  "org.bytedeco" % "cuda-redist-nccl" % "13.1-9.19-1.5.13" classifier "linux-x86_64",
-//  "org.bytedeco" % "cuda-redist-nvcomp" % "13.1-9.19-1.5.13" classifier "linux-x86_64",
+//  "org.bytedeco" % "cuda-redist" % "13.1-9.19-1.5.13" classifier "macosx-arm64",
+//  "org.bytedeco" % "cuda-redist-cublas" % "13.1-9.19-1.5.13" classifier "macosx-arm64",
+//  "org.bytedeco" % "cuda-redist-cudnn" % "13.1-9.19-1.5.13" classifier "macosx-arm64",
+//  "org.bytedeco" % "cuda-redist-cusolver" % "13.1-9.19-1.5.13" classifier "macosx-arm64",
+//  "org.bytedeco" % "cuda-redist-cusparse" % "13.1-9.19-1.5.13" classifier "macosx-arm64",
+//  "org.bytedeco" % "cuda-redist-npp" % "13.1-9.19-1.5.13" classifier "macosx-arm64",
+//  "org.bytedeco" % "cuda-redist-nccl" % "13.1-9.19-1.5.13" classifier "macosx-arm64",
+//  "org.bytedeco" % "cuda-redist-nvcomp" % "13.1-9.19-1.5.13" classifier "macosx-arm64",
 //
 //  // OpenCV
 //  "org.bytedeco" % "opencv" % "4.13.0-1.5.13",
-//  "org.bytedeco" % "opencv" % "4.13.0-1.5.13" classifier "linux-x86_64",
+//  "org.bytedeco" % "opencv" % "4.13.0-1.5.13" classifier "macosx-arm64",
 //
 //  // FFmpeg
 //  "org.bytedeco" % "ffmpeg" % "8.0.1-1.5.13",
-//  "org.bytedeco" % "ffmpeg" % "8.0.1-1.5.13" classifier "linux-x86_64",
+//  "org.bytedeco" % "ffmpeg" % "8.0.1-1.5.13" classifier "macosx-arm64",
 //
 //
 //)

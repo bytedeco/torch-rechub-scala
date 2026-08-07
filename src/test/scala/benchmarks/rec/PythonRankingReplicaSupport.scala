@@ -1,7 +1,10 @@
 package benchmarks.rec
 
 import org.bytedeco.pytorch.global.torch.ScalarType
-import org.bytedeco.pytorch.{Adam, AdamOptions, Module, Tensor}
+import org.bytedeco.pytorch.{Tensor}
+import org.bytedeco.pytorch.optim.Adam
+import org.bytedeco.pytorch.optim.AdamOptions
+import org.bytedeco.pytorch.nn.Module
 import torchrec.Implicits.{RichTensor, tensor}
 import torchrec.basic.features.{Feature, SequenceFeature, SparseFeature}
 import torchrec.basic.losses.{BCELoss, BCEWithLogitsLoss}

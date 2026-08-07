@@ -2,6 +2,7 @@ package torchrec.quantization
 
 import org.bytedeco.pytorch.global.torch as pt
 import org.bytedeco.pytorch.global.torch.ScalarType
+import org.bytedeco.pytorch.nn.Module
 import org.bytedeco.pytorch.{Device, *}
 
 /** QuantizedLinear - Lianghua Hou De Xian Xing Ceng
@@ -12,7 +13,7 @@ class QuantizedLinear(
     private val scale: Tensor,
     private val zeroPoint: Tensor,
     private var bias: Tensor = null.asInstanceOf[Tensor]
-) extends AutoCloseable {
+) extends Module {
 
   private val inputScale: Tensor = pt.tensor(new Scalar(1.0f))
   private var quantizationScheme: torchrec.quantization.Quantizer.Scheme = torchrec.quantization.Quantizer.Scheme.PER_TENSOR
@@ -23,7 +24,7 @@ class QuantizedLinear(
 
   // ==================== Qian Xiang Chuan Di ====================
 
-  def forward(input: Tensor): Tensor = {
+  override def forward(input: Tensor): Tensor = {
     // Kuai Su Lian Jie Mo Xing: Y = X @ W^T + b
     val inputFlat = input.reshape(Array(-1, input.size(input.dim - 1))*)
 
@@ -124,11 +125,11 @@ class QuantizedModel(
     private val originalModel: Module,
     private val quantizedModules: scala.collection.mutable.Map[String, QuantizedLinear],
     private val quantizer: torchrec.quantization.Quantizer
-) extends AutoCloseable {
+) extends Module {
 
   private val fp32Model: Module = originalModel.clone(null)
 
-  def forward(input: Tensor): Tensor = {
+  override def forward(input: Tensor): Tensor = {
     // Xuan Ze Lianghua Huo FP32 Mo Xing
     if (quantizer.getMode == torchrec.quantization.Quantizer.Mode.DYNAMIC) {
       // Dongtai Lianghua: Shiyong Lianghua Hou De Jisuann

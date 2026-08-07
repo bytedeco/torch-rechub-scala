@@ -1,7 +1,8 @@
 package benchmarks.rec
 
 import org.bytedeco.pytorch.global.torch
-import org.bytedeco.pytorch.{Device, Module, Tensor}
+import org.bytedeco.pytorch.{Device, Tensor}
+import org.bytedeco.pytorch.nn.Module
 import torchrec.Implicits.{RichTensor, tensor}
 import torchrec.basic.features.SparseFeature
 import torchrec.basic.metrics.AUC

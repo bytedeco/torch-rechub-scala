@@ -1,6 +1,15 @@
 package torchrec.basic.layers
 
 import org.bytedeco.pytorch._
+import org.bytedeco.pytorch.nn.Module
+import org.bytedeco.pytorch.nn.modules._
+import org.bytedeco.pytorch.nn.modules.container._
+import org.bytedeco.pytorch.nn.options._
+import org.bytedeco.pytorch.optim._
+import org.bytedeco.pytorch.data.datasets._
+import org.bytedeco.pytorch.data.options._
+import org.bytedeco.pytorch.data.sampler._
+import org.bytedeco.pytorch.distributed._
 import org.bytedeco.pytorch.global.torch
 import org.bytedeco.pytorch.global.torch.ScalarType
 import torchrec.utils.DeviceSupport
@@ -83,7 +92,7 @@ class CapsuleNetwork(
       w = Some(wt)
   }
 
-  def forward(itemEb: Tensor, mask: Tensor): Tensor = {
+  override def forward(itemEb: Tensor, mask: Tensor): Tensor =  {
     val batchSize = itemEb.size(0)
     require(itemEb.device().equals(dev), s"itemEb device mismatch, layer=$dev, input=${itemEb.device()}")
 
@@ -223,7 +232,7 @@ object CapsuleNetwork {
 //      }
 //  }
 //
-//  def forward(itemEb: Tensor, mask: Tensor): Tensor = {
+//  override def forward(itemEb: Tensor, mask: Tensor): Tensor = {
 //    val batchSize = itemEb.size(0)
 //
 //    val itemEbHat = bilinearType match {

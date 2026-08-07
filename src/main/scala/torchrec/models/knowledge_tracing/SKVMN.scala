@@ -1,6 +1,15 @@
 package torchrec.models.knowledge_tracing
 
 import org.bytedeco.pytorch.*
+import org.bytedeco.pytorch.nn.Module
+import org.bytedeco.pytorch.nn.modules._
+import org.bytedeco.pytorch.nn.modules.container._
+import org.bytedeco.pytorch.nn.options._
+import org.bytedeco.pytorch.optim._
+import org.bytedeco.pytorch.data.datasets._
+import org.bytedeco.pytorch.data.options._
+import org.bytedeco.pytorch.data.sampler._
+import org.bytedeco.pytorch.distributed._
 import org.bytedeco.pytorch.global.torch
 import org.bytedeco.pytorch.global.torch.ScalarType
 import torchrec.Implicits.*
@@ -63,7 +72,7 @@ class SKVMN(
     pLayer.to(dev, false)
   }
 
-  def forward(
+  override def forward(
     conceptIds: Tensor,
     responses: Tensor
   ): Tensor = {
@@ -136,7 +145,7 @@ class SKVMN(
     // Stack fTList: each f has shape (batchSize, embedDim), result is (seqLen, batchSize, embedDim)
     val ft = torch.stack(new TensorVector(fTList.toSeq*), 0)
 
-    val lstmOut = lstm.forward(ft).get0()
+    val lstmOut = lstm.forwardT_TensorTensor_T(ft).get0()
 
     // lstmOut shape: (seqLen, batchSize, embedDim) because LSTM was created
     // with batch_first = false. The final time-step is at dim 0, index seqLen-1.

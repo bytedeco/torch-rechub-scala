@@ -1,8 +1,17 @@
 package torchrec.models.multi_task
 
 import org.bytedeco.pytorch._
+import org.bytedeco.pytorch.nn.Module
+import org.bytedeco.pytorch.nn.modules._
+import org.bytedeco.pytorch.nn.modules.container._
+import org.bytedeco.pytorch.nn.options._
+import org.bytedeco.pytorch.optim._
+import org.bytedeco.pytorch.data.datasets._
+import org.bytedeco.pytorch.data.options._
+import org.bytedeco.pytorch.data.sampler._
+import org.bytedeco.pytorch.distributed._
 import org.bytedeco.pytorch.global.torch
-import org.bytedeco.pytorch.global.torch.ScalarType
+
 import torchrec.basic.features._
 import torchrec.basic.layers.{EmbeddingLayer, MLP, PredictionLayer}
 import torchrec.utils.DeviceSupport
@@ -10,250 +19,239 @@ import torchrec.utils.DeviceSupport
 import scala.collection.mutable
 
 /**
- * PLE - Progressive Layered Extraction Multi-Task Learning Model
+ * PLE — Progressive Layered Extraction (RecSys'2020).
  *
- * Full implementation matching the Python torch_rechub PLE model.
- * Uses multi-level CGC (Customized Gate Control) layers for progressive
- * extraction of task-specific and shared representations.
+ * Mirrors the Python reference: a stack of CGC layers, each a `ModuleList` of
+ * task-specific / shared experts, plus task-specific gates (and a shared gate
+ * for all but the last level). Final stage: per-task towers and prediction
+ * layers, all in `ModuleListImpl`s.
  *
  * Reference:
  *   "Progressive Layered Extraction (PLE): A Novel Multi-Task Learning (MTL) Model
- *   for Personalized Recommendations"
- *   RecSys'2020 - https://dl.acm.org/doi/abs/10.1145/3383313.3412236
+ *    for Personalized Recommendations"
+ *   https://dl.acm.org/doi/abs/10.1145/3383313.3412236
  *
- * Architecture:
- *   - CGC Layers: Customized Gate Control for expert selection - stored in List for type-safe access
- *   - Task-specific Experts: Task-specific feature extractors (inside CGC)
- *   - Shared Experts: Common feature extractors shared across tasks (inside CGC)
- *   - Task-specific Towers and Prediction layers - stored in Map for type-safe access
- *
- * @param features List of features
- * @param taskTypes List of task types: "classification" or "regression"
- * @param nLevel Number of CGC layers
- * @param nExpertSpecific Number of task-specific experts per task
- * @param nExpertShared Number of shared experts
- * @param expertParams Expert MLP parameters: dims, activation, dropout
- * @param towerParamsList List of tower params dict (one per task)
- * @param device Device for computation
+ * @param features         List of feature columns.
+ * @param taskTypes        Per-task type: `"classification"` or `"regression"`.
+ * @param nLevel           Number of CGC layers.
+ * @param nExpertSpecific  Task-specific experts per task.
+ * @param nExpertShared    Shared experts.
+ * @param expertParams     Expert MLP params.
+ * @param towerParamsList  Per-task tower params.
+ * @param device           Device for parameters.
  */
 class PLE(
-           features: List[Feature],
-           taskTypes: List[String],
-           nLevel: Int = 3,
-           nExpertSpecific: Int = 1,
-           nExpertShared: Int = 1,
-           expertParams: Map[String, Any] = Map(),
-           towerParamsList: List[Map[String, Any]] = List(),
-           device: String = DeviceSupport.backend
-         ) extends Module {
+  features: List[Feature],
+  taskTypes: List[String],
+  nLevel: Int = 3,
+  nExpertSpecific: Int = 1,
+  nExpertShared: Int = 1,
+  expertParams: Map[String, Any] = Map(),
+  towerParamsList: List[Map[String, Any]] = List(),
+  device: String = DeviceSupport.backend
+) extends Module {
 
-  require(features.nonEmpty, "features cannot be empty")
-  require(taskTypes.nonEmpty, "taskTypes cannot be empty")
-  require(nLevel > 0, "nLevel must be positive")
-  require(nExpertSpecific >= 0, "nExpertSpecific must be non-negative")
-  require(nExpertShared >= 0, "nExpertShared must be non-negative")
+  require(features.nonEmpty, "PLE: features cannot be empty")
+  require(taskTypes.nonEmpty, "PLE: taskTypes cannot be empty")
+  require(nLevel > 0, s"PLE: nLevel must be > 0, got $nLevel")
+  require(nExpertSpecific >= 0, s"PLE: nExpertSpecific must be >= 0, got $nExpertSpecific")
+  require(nExpertShared >= 0, s"PLE: nExpertShared must be >= 0, got $nExpertShared")
+  require(taskTypes.forall(t => t == "classification" || t == "regression"),
+    "PLE: taskTypes must be 'classification' or 'regression'")
 
-  private val targetDevice = new Device(device)
-  private val nTask = taskTypes.size
-
-  // Feature dimensions
+  private val nTask: Int = taskTypes.size
   private val inputDims: Int = features.map(_.embedDim).sum
+  private val expertDims: List[Long] =
+    expertParams.getOrElse("dims", List(128L)).asInstanceOf[List[Long]]
+  private val expertLast: Long = expertDims.last
 
-  // Embedding layer
   private val embedding = new EmbeddingLayer(features, features.head.embedDim, device)
   register_module("embedding", embedding)
 
-  // Expert params
-  private val expertDims = expertParams.getOrElse("dims", List(128L)).asInstanceOf[List[Long]]
-  private val expertActivation = expertParams.getOrElse("activation", "relu").asInstanceOf[String]
-  private val expertDropout = expertParams.getOrElse("dropout", 0.0f).asInstanceOf[Float]
-
-  // ====== Store typed references in List/Map for type-safe Scala access ======
-  // CGC Layers - List for type-safe access
-  private val cgcLayers: List[CGC] = (0 until nLevel).map { level =>
+  // CGC layers — mirrors `nn.ModuleList(CGC(...) for i in range(n_level))`.
+  private val cgcLayers: ModuleListImpl = new ModuleListImpl()
+  private val cgcRefs = Array.ofDim[CGC](nLevel)
+  for (level <- 0 until nLevel) {
     val cgc = new CGC(
       curLevel = level + 1,
       nLevel = nLevel,
       nTask = nTask,
       nExpertSpecific = nExpertSpecific,
       nExpertShared = nExpertShared,
-      inputDims = if (level == 0) inputDims else expertDims.last.toInt,
+      inputDims = if (level == 0) inputDims else expertLast.toInt,
       expertParams = expertParams,
       device = device
     )
     register_module(s"cgc_$level", cgc)
-    cgc
-  }.toList
+    cgcLayers.push_back(cgc)
+    cgcRefs(level) = cgc
+  }
 
-  // Towers - Map for type-safe access
-  private val towersMap: Map[String, MLP] = (0 until nTask).map { i =>
-    val name = s"tower_$i"
+  // Towers — one per task.
+  private val towers: ModuleListImpl = new ModuleListImpl()
+  for (i <- 0 until nTask) {
     val params = if (towerParamsList.isEmpty) Map[String, Any]() else towerParamsList(i)
-    val dims = params.getOrElse("dims", List(expertDims.last)).asInstanceOf[List[Long]]
+    val dims = params.getOrElse("dims", List(expertLast)).asInstanceOf[List[Long]]
     val activation = params.getOrElse("activation", "relu").asInstanceOf[String]
     val dropout = params.getOrElse("dropout", 0.0f).asInstanceOf[Float]
-    val tower = new MLP(expertDims.last.toInt, dims, 1, activation, dropout, outputLayer = true, device = device)
-    register_module(name, tower)
-    (name, tower)
-  }.toMap
+    val m = new MLP(expertLast, dims, 1L, activation, dropout, outputLayer = true, device = device)
+    register_module(s"tower_$i", m)
+    towers.push_back(m)
+  }
 
-  // Prediction layers - Map for type-safe access
-  private val predictLayersMap: Map[String, PredictionLayer] = (0 until nTask).map { i =>
-    val name = s"predictLayer_$i"
-    val predictLayer = new PredictionLayer(taskTypes(i))
-    register_module(name, predictLayer)
-    (name, predictLayer)
-  }.toMap
+  // Prediction layers — one per task.
+  private val predictLayers: ModuleListImpl = new ModuleListImpl()
+  for (i <- 0 until nTask) {
+    val m = new PredictionLayer(taskTypes(i))
+    register_module(s"predictLayer_$i", m)
+    predictLayers.push_back(m)
+  }
 
   def forward(x: Map[String, Tensor]): Tensor = {
-    // Embedding
-    val embedX = embedding.forward(sparseFeats = x, sequenceFeats = Map(), squeeze = true)
+    val embedX = embedding.forward(sparseFeats = x, sequenceFeats = Map.empty, squeeze = true)
 
-    // Initialize PLE inputs: [embed_x] * (n_task + 1) - one for each task + shared
+    // ple_inputs starts as [embed_x] * (n_task + 1) — one slot per task + shared.
     var pleInputs: List[Tensor] = List.fill(nTask + 1)(embedX)
 
-    // Progressive CGC layers
-    for (level <- 0 until nLevel) {
-      val pleOuts = cgcLayers(level).forward(pleInputs)
-      pleInputs = pleOuts
+    var level = 0
+    while (level < nLevel) {
+      pleInputs = cgcRefs(level).forward(pleInputs)
+      level += 1
     }
 
-    // Task predictions
-    val outputs = (0 until nTask).map { i =>
-      val tower = towersMap(s"tower_$i")
-      val predictLayer = predictLayersMap(s"predictLayer_$i")
-      val towerOut = tower.forward(pleInputs(i))
-      predictLayer.forward(towerOut)
+    val ys = mutable.ArrayBuffer[Tensor]()
+    var ti = 0
+    while (ti < nTask) {
+      val towerOut = towers.get(ti).forward(pleInputs(ti))
+      ys += predictLayers.get(ti).forward(towerOut)
+      ti += 1
     }
 
-    // Concatenate: torch.cat(ys, dim=1)
-    torch.cat(new TensorVector(outputs: _*), 1)
+    torch.cat(new TensorVector(ys.toSeq: _*), 1L)
   }
 }
 
 /**
- * CGC - Customized Gate Control Layer for PLE
+ * CGC — Customized Gate Control layer (per level of PLE).
  *
- * Implements the gating mechanism for expert selection in PLE.
- *
- * @param curLevel Current level of CGC in PLE
- * @param nLevel Total number of CGC levels
- * @param nTask Number of tasks
- * @param nExpertSpecific Number of task-specific experts per task
- * @param nExpertShared Number of shared experts
- * @param inputDims Input dimension for experts
- * @param expertParams Expert MLP parameters
- * @param device Device for computation
+ * Mirrors the Python reference exactly:
+ *   - `n_task * n_expert_specific` task-specific experts
+ *   - `n_expert_shared` shared experts
+ *   - `n_task` task-specific gates (softmax over `n_expert_specific + n_expert_shared`)
+ *   - one shared gate (softmax over all experts) at every level except the last
  */
 class CGC(
-           curLevel: Int,
-           nLevel: Int,
-           nTask: Int,
-           nExpertSpecific: Int,
-           nExpertShared: Int,
-           inputDims: Int,
-           expertParams: Map[String, Any],
-           device: String = DeviceSupport.backend
-         ) extends Module {
+  curLevel: Int,
+  nLevel: Int,
+  nTask: Int,
+  nExpertSpecific: Int,
+  nExpertShared: Int,
+  inputDims: Int,
+  expertParams: Map[String, Any],
+  device: String = DeviceSupport.backend
+) extends Module {
 
-  private val targetDevice = new Device(device)
+  private val expertDims: List[Long] =
+    expertParams.getOrElse("dims", List(128L)).asInstanceOf[List[Long]]
+  private val expertActivation: String =
+    expertParams.getOrElse("activation", "relu").asInstanceOf[String]
+  private val expertDropout: Float =
+    expertParams.getOrElse("dropout", 0.0f).asInstanceOf[Float]
+  private val expertLast: Long = expertDims.last
 
-  // Total experts = nExpertSpecific per task * nTask + nExpertShared
-  // This is the dimension for gates (each task gates access to all experts)
-  private val nExpertAll = nExpertSpecific * nTask + nExpertShared
+  // Number of experts a task-specific gate sees (own + shared).
+  private val nExpertPerTask: Long = (nExpertSpecific + nExpertShared).toLong
+  // Number of experts the shared gate sees (all of them).
+  private val nExpertAll: Long = (nExpertSpecific * nTask + nExpertShared).toLong
 
-  // Expert dims
-  private val expertDims = expertParams.getOrElse("dims", List(128L)).asInstanceOf[List[Long]]
-  private val expertActivation = expertParams.getOrElse("activation", "relu").asInstanceOf[String]
-  private val expertDropout = expertParams.getOrElse("dropout", 0.0f).asInstanceOf[Float]
+  // Task-specific experts — `n_task * n_expert_specific` of them.
+  private val expertsSpecific: ModuleListImpl = new ModuleListImpl()
+  for (i <- 0 until nTask * nExpertSpecific) {
+    val m = new MLP(inputDims, expertDims, expertLast, expertActivation, expertDropout,
+      outputLayer = false, device = device)
+    register_module(s"expert_specific_$i", m)
+    expertsSpecific.push_back(m)
+  }
 
-  // ====== Store typed references in List for type-safe access ======
-  // Task-specific Experts - List for type-safe access
-  private val expertsSpecific: List[MLP] = (0 until nTask * nExpertSpecific).map { i =>
-    val expert = new MLP(inputDims, expertDims, expertDims.last, expertActivation, expertDropout, outputLayer = false, device = device)
-    expert.to(targetDevice, false)
-    register_module(s"expert_specific_$i", expert)
-    expert
-  }.toList
+  // Shared experts.
+  private val expertsShared: ModuleListImpl = new ModuleListImpl()
+  for (i <- 0 until nExpertShared) {
+    val m = new MLP(inputDims, expertDims, expertLast, expertActivation, expertDropout,
+      outputLayer = false, device = device)
+    register_module(s"expert_shared_$i", m)
+    expertsShared.push_back(m)
+  }
 
-  // Shared Experts - List for type-safe access
-  private val expertsShared: List[MLP] = (0 until nExpertShared).map { i =>
-    val expert = new MLP(inputDims, expertDims, expertDims.last, expertActivation, expertDropout, outputLayer = false, device = device)
-    expert.to(targetDevice, false)
-    register_module(s"expert_shared_$i", expert)
-    expert
-  }.toList
+  // Task-specific gates — one per task, softmax over `n_expert_per_task`.
+  private val gatesSpecific: ModuleListImpl = new ModuleListImpl()
+  for (i <- 0 until nTask) {
+    val m = new MLP(inputDims, List(nExpertPerTask), nExpertPerTask, "softmax", 0.0f,
+      outputLayer = false, device = device)
+    register_module(s"gate_specific_$i", m)
+    gatesSpecific.push_back(m)
+  }
 
-  // Task-specific Gates - List for type-safe access
-  // Each task-specific gate controls: nExpertSpecific (private) + nExpertShared (shared) = nExpertPerTask experts
-  private val nExpertPerTask = nExpertSpecific + nExpertShared
-  private val gatesSpecific: List[MLP] = (0 until nTask).map { i =>
-    val gate = new MLP(inputDims, List(nExpertPerTask), nExpertPerTask, "softmax", 0.0f, outputLayer = false, device = device)
-    gate.to(targetDevice, false)
-    register_module(s"gate_specific_$i", gate)
-    gate
-  }.toList
-
-  // Shared Gate (only if not last level)
-  // Shared gate controls ALL experts: nExpertSpecific * nTask + nExpertShared
-  private val gateSharedOption: Option[MLP] = if (curLevel < nLevel) {
-    val gate = new MLP(inputDims, List(nExpertAll), nExpertAll, "softmax", 0.0f, outputLayer = false, device = device)
-    gate.to(targetDevice, false)
-    register_module("gate_shared", gate)
-    Some(gate)
-  } else None
+  // Shared gate — only at non-final levels.
+  private val gateShared: ModuleListImpl = new ModuleListImpl()
+  private val hasSharedGate: Boolean = curLevel < nLevel
+  if (hasSharedGate) {
+    val m = new MLP(inputDims, List(nExpertAll), nExpertAll, "softmax", 0.0f,
+      outputLayer = false, device = device)
+    register_module("gate_shared", m)
+    gateShared.push_back(m)
+  }
 
   def forward(xList: List[Tensor]): List[Tensor] = {
-    // xList: List of [batch_size, input_dims] - one per task + shared
+    // xList: List of (batch, inputDims) — one per task + shared at the tail.
 
-    // Expert specific outputs for each task
-    val expertSpecificOuts: mutable.ListBuffer[Tensor] = mutable.ListBuffer()
-    for (taskIdx <- 0 until nTask) {
-      for (expertIdxLocal <- 0 until nExpertSpecific) {
-        val expertIdx = taskIdx * nExpertSpecific + expertIdxLocal
-        val expert = expertsSpecific(expertIdx)
-        expertSpecificOuts += expert.forward(xList(taskIdx)).unsqueeze(1)
-      }
+    // expert_specific_outs: (batch, 1, expertLast) per expert.
+    val expertSpecificOuts = mutable.ArrayBuffer[Tensor]()
+    var i = 0
+    while (i < nTask * nExpertSpecific) {
+      val taskIdx = i / nExpertSpecific
+      expertSpecificOuts += expertsSpecific.get(i).forward(xList(taskIdx)).unsqueeze(1)
+      i += 1
     }
 
-    // Expert shared outputs
-    val expertSharedOuts: Seq[Tensor] = expertsShared.map(_.forward(xList.last).unsqueeze(1))
-
-    // Gate specific outputs
-    val gateSpecificOuts: Seq[Tensor] = gatesSpecific.zipWithIndex.map { case (gate, taskIdx) =>
-      gate.forward(xList(taskIdx)).unsqueeze(-1)
+    // expert_shared_outs: (batch, 1, expertLast) per shared expert.
+    val expertSharedOuts = mutable.ArrayBuffer[Tensor]()
+    var s = 0
+    while (s < nExpertShared) {
+      expertSharedOuts += expertsShared.get(s).forward(xList.last).unsqueeze(1)
+      s += 1
     }
 
-    // CGC outputs for each task
-    val cgcOuts: mutable.ListBuffer[Tensor] = mutable.ListBuffer()
+    // gate_specific_outs: (batch, n_expert_per_task, 1) per task.
+    val gateSpecificOuts = mutable.ArrayBuffer[Tensor]()
+    var g = 0
+    while (g < nTask) {
+      gateSpecificOuts += gatesSpecific.get(g).forward(xList(g)).unsqueeze(-1)
+      g += 1
+    }
 
-    for (taskIdx <- 0 until nTask) {
-      // Get expert outputs for this task
-      val taskExpertOuts = expertSpecificOuts.slice(taskIdx * nExpertSpecific, (taskIdx + 1) * nExpertSpecific)
-
-      // Combine with shared experts
+    // Per-task output: gate over (own experts + shared experts).
+    val cgcOuts = mutable.ListBuffer[Tensor]()
+    var ti = 0
+    while (ti < nTask) {
+      // Slice this task's specific experts out of expertSpecificOuts.
+      val taskExpertOuts = expertSpecificOuts.slice(ti * nExpertSpecific, (ti + 1) * nExpertSpecific)
       val allExpertsForTask = taskExpertOuts ++ expertSharedOuts
-
-      // Concatenate experts: [batch_size, n_expert_specific + n_expert_shared, expert_dim]
-      val expertConcat = torch.cat(new TensorVector(allExpertsForTask.toSeq*), 1)
-
-      // Weighted sum using gate
-      val gateOut = gateSpecificOuts(taskIdx) // [batch_size, n_expert_all, 1]
-      val expertWeight = torch.mul(gateOut, expertConcat) // [batch_size, n_expert_all, expert_dim]
-
-      // Sum: [batch_size, expert_dim]
-      val expertPooling = expertWeight.sum(1)
-      cgcOuts += expertPooling
+      // (batch, n_expert_per_task, expertLast)
+      val expertConcat = torch.cat(new TensorVector(allExpertsForTask.toSeq: _*), 1L)
+      // (batch, n_expert_per_task, expertLast)
+      val expertWeight = torch.mul(gateSpecificOuts(ti), expertConcat)
+      // (batch, expertLast)
+      cgcOuts += expertWeight.sum(1L)
+      ti += 1
     }
 
-    // Add shared gate output if not last level
-    if (gateSharedOption.isDefined) {
-      val allExpertOuts = expertSpecificOuts.toList ++ expertSharedOuts.toList
-      val expertConcatShared = torch.cat(new TensorVector(allExpertOuts: _*), 1)
-      val gateSharedOut = gateSharedOption.get.forward(xList.last).unsqueeze(-1)
+    // Append shared-gate output at non-final levels — length becomes n_task + 1.
+    if (hasSharedGate) {
+      val allExpertOuts = expertSpecificOuts ++ expertSharedOuts
+      val expertConcatShared = torch.cat(new TensorVector(allExpertOuts.toSeq: _*), 1L)
+      val gateSharedOut = gateShared.get(0).forward(xList.last).unsqueeze(-1)
       val expertWeightShared = torch.mul(gateSharedOut, expertConcatShared)
-      val expertPoolingShared = expertWeightShared.sum(1)
-      cgcOuts += expertPoolingShared
+      cgcOuts += expertWeightShared.sum(1L)
     }
 
     cgcOuts.toList
@@ -261,19 +259,17 @@ class CGC(
 }
 
 /**
- * PLE companion object with factory methods.
+ * PLE factory — identical to the constructor.
  */
 object PLE {
   def apply(
-             features: List[Feature],
-             taskTypes: List[String] = List("classification"),
-             nLevel: Int = 3,
-             nExpertSpecific: Int = 1,
-             nExpertShared: Int = 1,
-             expertParams: Map[String, Any] = Map("dims" -> List(128L), "activation" -> "relu", "dropout" -> 0.0f),
-             towerParamsList: List[Map[String, Any]] = List(),
-             device: String = DeviceSupport.backend
-           ): PLE = {
-    new PLE(features, taskTypes, nLevel, nExpertSpecific, nExpertShared, expertParams, towerParamsList, device)
-  }
+    features: List[Feature],
+    taskTypes: List[String] = List("classification"),
+    nLevel: Int = 3,
+    nExpertSpecific: Int = 1,
+    nExpertShared: Int = 1,
+    expertParams: Map[String, Any] = Map("dims" -> List(128L), "activation" -> "relu", "dropout" -> 0.0f),
+    towerParamsList: List[Map[String, Any]] = List(),
+    device: String = DeviceSupport.backend
+  ): PLE = new PLE(features, taskTypes, nLevel, nExpertSpecific, nExpertShared, expertParams, towerParamsList, device)
 }

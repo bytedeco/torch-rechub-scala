@@ -1,6 +1,15 @@
 package torchrec.basic.layers
 
 import org.bytedeco.pytorch.*
+import org.bytedeco.pytorch.nn.Module
+import org.bytedeco.pytorch.nn.modules._
+import org.bytedeco.pytorch.nn.modules.container._
+import org.bytedeco.pytorch.nn.options._
+import org.bytedeco.pytorch.optim._
+import org.bytedeco.pytorch.data.datasets._
+import org.bytedeco.pytorch.data.options._
+import org.bytedeco.pytorch.data.sampler._
+import org.bytedeco.pytorch.distributed._
 import org.bytedeco.pytorch.global.torch
 import torchrec.utils.DeviceSupport
 import torchrec.Implicits.*
@@ -14,7 +23,7 @@ class FFM(
   device: String = DeviceSupport.backend
 ) extends Module {
 
-  def forward(x: Tensor): Tensor = {
+  override def forward(x: Tensor): Tensor = {
     val crossedEmbeddings = mutable.ListBuffer[Tensor]()
 
     for (i <- 0 until numFields - 1; j <- i + 1 until numFields) {

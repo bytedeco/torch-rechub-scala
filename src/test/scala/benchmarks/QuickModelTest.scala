@@ -9,6 +9,15 @@ import torchrec.Implicits._
 import torchrec.basic.features._
 
 import org.bytedeco.pytorch._
+import org.bytedeco.pytorch.nn.Module
+import org.bytedeco.pytorch.nn.modules._
+import org.bytedeco.pytorch.nn.modules.container._
+import org.bytedeco.pytorch.nn.options._
+import org.bytedeco.pytorch.optim._
+import org.bytedeco.pytorch.data.datasets._
+import org.bytedeco.pytorch.data.options._
+import org.bytedeco.pytorch.data.sampler._
+import org.bytedeco.pytorch.distributed._
 import org.bytedeco.pytorch.global.torch.ScalarType
 
 /**
@@ -83,7 +92,7 @@ object QuickModelTest {
   def testAutoInt(trainLoader: DataLoader, testLoader: DataLoader, device: String): Unit = {
     try {
       val features = (0 until 5).map(i => SparseFeature(s"cat_$i", 1000, 8)).toList
-      val model = new AutoInt(features, embedDim = 8, numAttnHeads = 2, numLayers = 2, useMlp = true, device = device)
+      val model = new AutoInt(features, numAttnHeads = 2, numLayers = 2, useMlp = true, device = device)
       val trainer = new CTRTrainer(model, 0.001f, device = device, numEpochs = 2, verbose = true)
       trainer.fit(trainLoader, Some(testLoader))
       val metrics = trainer.evaluate(testLoader)

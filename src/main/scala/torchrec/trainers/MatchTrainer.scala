@@ -7,6 +7,15 @@ import torchrec.models.ranking.DIEN
 import torchrec.basic.metrics._
 
 import org.bytedeco.pytorch._
+import org.bytedeco.pytorch.nn.Module
+import org.bytedeco.pytorch.nn.modules._
+import org.bytedeco.pytorch.nn.modules.container._
+import org.bytedeco.pytorch.nn.options._
+import org.bytedeco.pytorch.optim._
+import org.bytedeco.pytorch.data.datasets._
+import org.bytedeco.pytorch.data.options._
+import org.bytedeco.pytorch.data.sampler._
+import org.bytedeco.pytorch.distributed._
 import org.bytedeco.pytorch.global.torch
 import org.bytedeco.pytorch.global.torch.ScalarType
 
@@ -15,7 +24,7 @@ import scala.collection.mutable
 import torchrec.basic.losses.BPRLoss
 import torchrec.utils.DeviceSupport
 import torchrec.TorchRec
-
+import org.bytedeco.pytorch.optim.options.AdamOptions
 /**
  * Trainer for matching/retrieval models
  */

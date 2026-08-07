@@ -150,7 +150,7 @@ object ModelUtils {
    * Get model architecture summary as a string.
    */
   def modelSummary(
-    model: org.bytedeco.pytorch.Module,
+    model: org.bytedeco.pytorch.nn.Module,
     inputFeatures: List[Feature],
     embedDim: Int
   ): String = {

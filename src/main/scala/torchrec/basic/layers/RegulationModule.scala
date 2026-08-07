@@ -1,6 +1,15 @@
 package torchrec.basic.layers
 
 import org.bytedeco.pytorch._
+import org.bytedeco.pytorch.nn.Module
+import org.bytedeco.pytorch.nn.modules._
+import org.bytedeco.pytorch.nn.modules.container._
+import org.bytedeco.pytorch.nn.options._
+import org.bytedeco.pytorch.optim._
+import org.bytedeco.pytorch.data.datasets._
+import org.bytedeco.pytorch.data.options._
+import org.bytedeco.pytorch.data.sampler._
+import org.bytedeco.pytorch.distributed._
 import org.bytedeco.pytorch.global.torch
 import org.bytedeco.pytorch.global.torch.ScalarType
 import torchrec.utils.DeviceSupport
@@ -59,9 +68,9 @@ class RegulationModule(
    * @param x Input tensor (B, total_dim) where total_dim = sum(feaDims)
    * @return (out1, out2) tuple of gated tensors (B, total_dim)
    */
-  def forward(x: Tensor): (Tensor, Tensor) = {
+   def forwardReg(x: Tensor, r: Boolean =false): T_TensorTensor_T = {
     if (!useRegulation) {
-      return (x, x)
+      return new T_TensorTensor_T(x, x)
     }
 
     // Compute softmax gates with temperature
@@ -97,6 +106,6 @@ class RegulationModule(
     val out1 = g1Broadcast.mul(x)
     val out2 = g2Broadcast.mul(x)
 
-    (out1, out2)
+    new T_TensorTensor_T(out1, out2)
   }
 }

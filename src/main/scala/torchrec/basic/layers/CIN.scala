@@ -1,80 +1,131 @@
 package torchrec.basic.layers
 
+import org.bytedeco.javacpp.LongPointer
 import org.bytedeco.pytorch._
+import org.bytedeco.pytorch.nn.Module
+import org.bytedeco.pytorch.nn.modules._
+import org.bytedeco.pytorch.nn.modules.container._
+import org.bytedeco.pytorch.nn.options._
+import org.bytedeco.pytorch.optim._
+import org.bytedeco.pytorch.data.datasets._
+import org.bytedeco.pytorch.data.options._
+import org.bytedeco.pytorch.data.sampler._
+import org.bytedeco.pytorch.distributed._
 import org.bytedeco.pytorch.global.torch
 
 import torchrec.utils.DeviceSupport
-import scala.collection.mutable
-
-import torchrec.Implicits._
 
 /**
- * Compressed Interaction Network from xDeepFM
+ * Compressed Interaction Network (xDeepFM).
+ *
+ * Mirrors the Python reference: stacks 1×1 `Conv1d` layers over outer-product
+ * feature maps; sums each layer's channels and feeds the concatenated vector
+ * through a final `Linear` to produce a single logit per batch element.
+ *
+ * Parameters
+ * ----------
+ * inputDim : Int
+ *   Number of feature fields (the original CIN paper's `input_dim`).
+ * cinSize : List[Int]
+ *   Output channels per Conv1d layer.
+ * splitHalf : Boolean, default = true
+ *   When true, halve the output channels of every layer except the last, and
+ *   feed the second half into the next layer — the standard xDeepFM trick.
+ * device : String
+ *   Device for parameters.
+ *
+ * Shape
+ * -----
+ * Input  : (batch, numFields, embedDim)
+ * Output : (batch, 1)
  */
 class CIN(
-  embedDim: Int = 8,
-  numLayers: Int = 3,
-  activation: String = "relu",
+  inputDim: Int,
+  cinSize: List[Int],
+  splitHalf: Boolean = true,
   device: String = DeviceSupport.backend
 ) extends Module {
 
-  private val layerSizes: List[Long] = (0 until numLayers).map { i =>
-    math.max(1, embedDim / (i + 1)).toLong
-  }.toList
+  require(inputDim > 0, s"CIN: inputDim must be > 0, got $inputDim")
+  require(cinSize.nonEmpty, s"CIN: cinSize must not be empty")
 
-  // Lazily created FC layers (input dim only known at first forward)
-  private var fcLayers: List[LinearImpl] = _
-  private var lastNumFields: Int = -1
+  private val numLayers: Int = cinSize.length
 
-  def forward(embeddings: Tensor): Tensor = {
-    val batchSize = embeddings.size(0)
-    val numFields = embeddings.size(1)
+  // Mirror Python's nn.ModuleList — registered with PyTorch's module system.
+  // We index it directly in forward() instead of caching typed refs.
+  private val convLayers: ModuleListImpl = new ModuleListImpl()
 
-    // Lazily build layers on first call (input dim depends on numFields)
-    if (fcLayers == null || lastNumFields != numFields) {
-      fcLayers = List.tabulate(numLayers) { layerIdx =>
-        val inDim = numFields * embeddings.size(2)
-        val outSize = layerSizes(layerIdx)
-        val fc = new LinearImpl(inDim, numFields * outSize)
-        register_module(s"fc_$layerIdx", fc)
-        fc.to(new org.bytedeco.pytorch.Device(device), false)
-        fc
-      }
-      lastNumFields = numFields.toInt
-      
-    }
+  // Build layers eagerly — conv input dim depends on `prev_dim`, which in turn
+  // depends on whether the previous layer split its channels in half.
+  var prevDim: Int = inputDim
+  var fcInputDim: Int = 0
+  var i = 0
+  while (i < numLayers) {
+    val fullSize = cinSize(i)
+    val opt = new Conv1dOptions(inputDim.toLong * prevDim.toLong, fullSize.toLong, new LongPointer(Array(1L): _*))
+    val conv = new Conv1dImpl(opt)
+    convLayers.push_back(conv)
+    register_module(s"conv_$i", conv)
 
-    var xk = embeddings
-    val splitResult = embeddings.split(1, 1)
-    var hk = splitResult.get(0)
+    val splitLayer = splitHalf && i != numLayers - 1
+    val sizeForNext = if (splitLayer) fullSize / 2 else fullSize
+    prevDim = sizeForNext
+    fcInputDim += sizeForNext
 
-    val outputs = mutable.ListBuffer[Tensor]()
-    outputs += hk.squeeze(1)
-
-    for (layerIdx <- 0 until numLayers) {
-      val xh = torch.matmul(xk.transpose(1, 2), hk)
-      val xhSqueezed = xh.squeeze(1)
-
-      val out = fcLayers(layerIdx).forward(xhSqueezed)
-
-      val activated = activation match {
-        case "relu" => out.relu()
-        case "sigmoid" => out.sigmoid()
-        case "tanh" => out.tanh()
-        case _ => out
-      }
-
-      val pooled = activated.sum(1)
-
-      val newHk = pooled.unsqueeze(1).repeat(1, numFields, 1)
-      xk = xk
-      hk = newHk.transpose(1, 2)
-
-      outputs += pooled
-    }
-
-    val tensorVec = new TensorVector(outputs.size.toLong)
-    outputs.foreach(tensorVec.push_back)
-    torch.cat(tensorVec, 1L)
+    i += 1
   }
+
+  private val fc = new LinearImpl(fcInputDim.toLong, 1L)
+  register_module("fc", fc)
+
+  override def forward(x: Tensor): Tensor = {
+    // x: (batch, inputDim, embedDim)
+    val batchSize = x.size(0)
+    val embedDim = x.size(2)
+
+    val x0 = x.unsqueeze(2)              // (batch, inputDim, 1, embedDim)
+    var h = x                             // (batch, inputDim, embedDim) → updated each layer
+    val xs = scala.collection.mutable.ListBuffer[Tensor]()
+
+    var i = 0
+    while (i < numLayers) {
+      // Outer product across field pairs: x0 (F, 1) × h.unsqueeze(1) (1, prev)
+      // gives (batch, inputDim, prevDim, embedDim) via broadcasting.
+      val outer = x0.mul(h.unsqueeze(1))  // (batch, inputDim, prevDim, embedDim)
+      val reshaped = outer.view(batchSize, inputDim.toLong * h.size(1), embedDim)
+
+      val convOut = convLayers.get(i).forward(reshaped).relu()
+
+      if (splitHalf && i != numLayers - 1) {
+        val halfSize = convOut.size(1) / 2
+        val first = convOut.narrow(1, 0L, halfSize)
+        val second = convOut.narrow(1, halfSize, halfSize)
+        xs += first
+        h = second
+      } else {
+        xs += convOut
+        h = convOut
+      }
+
+      i += 1
+    }
+
+    val tensorVec = new TensorVector(xs.toSeq: _*)
+    val stacked = torch.cat(tensorVec, 1L)  // (batch, fcInputDim, embedDim)
+    val summed = stacked.sum(2L)              // (batch, fcInputDim)
+    fc.forward(summed)
+  }
+}
+
+/**
+ * CIN factory — identical to the constructor; mirrors the Python
+ * ``CIN(input_dim, cin_size, split_half=True)`` call style.
+ */
+object CIN {
+  def apply(
+    inputDim: Int,
+    cinSize: List[Int],
+    splitHalf: Boolean = true,
+    device: String = DeviceSupport.backend
+  ): CIN = new CIN(inputDim, cinSize, splitHalf, device)
 }

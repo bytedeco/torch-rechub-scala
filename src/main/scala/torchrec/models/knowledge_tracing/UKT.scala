@@ -1,6 +1,15 @@
 package torchrec.models.knowledge_tracing
 
 import org.bytedeco.pytorch.*
+import org.bytedeco.pytorch.nn.Module
+import org.bytedeco.pytorch.nn.modules._
+import org.bytedeco.pytorch.nn.modules.container._
+import org.bytedeco.pytorch.nn.options._
+import org.bytedeco.pytorch.optim._
+import org.bytedeco.pytorch.data.datasets._
+import org.bytedeco.pytorch.data.options._
+import org.bytedeco.pytorch.data.sampler._
+import org.bytedeco.pytorch.distributed._
 import org.bytedeco.pytorch.global.torch
 import org.bytedeco.pytorch.global.torch.ScalarType
 import torchrec.Implicits.*
@@ -108,7 +117,7 @@ class UKT(
    * @param responses   Responses 0/1 (batch, seqLen)
    * @return Predictions (batch, seqLen) - probability of correct response
    */
-  def forward(
+  override def forward(
     conceptIds: Tensor,
     responses: Tensor
   ): Tensor = {
@@ -164,9 +173,9 @@ class UKT(
     var meanOut = qMeanAdjusted
     var covOut = qCovAdjusted
     blocks.foreach { block =>
-      val result = block.forward(meanOut, covOut, qaMeanWithPos, qaCovWithPos)
-      meanOut = result._1
-      covOut = result._2
+      val result = block.forwardPair(meanOut, covOut, qaMeanWithPos, qaCovWithPos)
+      meanOut = result.get0() //_1
+      covOut = result.get1() //_2
     }
 
     // Apply ELU activation to covariance for uncertainty measure
@@ -239,11 +248,11 @@ class UncertaintyTransformerBlock(
     meanOutProj.to(dev, false); covOutProj.to(dev, false)
     ff1.to(dev, false); ff2.to(dev, false)
   }
-
-  def forward(
+//(Tensor, Tensor)
+def forwardPair(
     qMean: Tensor, qCov: Tensor,
     vMean: Tensor, vCov: Tensor
-  ): (Tensor, Tensor) = {
+  ): T_TensorTensor_T = {
     val batchSize = qMean.size(0).toInt
     val seqLen = qMean.size(1).toInt
 
@@ -282,6 +291,6 @@ class UncertaintyTransformerBlock(
     val covProjected = covOutProj.forward(qCov)
     val covWithRes = qCov.add(covProjected)
 
-    (meanFinal, covWithRes)
+    new T_TensorTensor_T(meanFinal, covWithRes)
   }
 }

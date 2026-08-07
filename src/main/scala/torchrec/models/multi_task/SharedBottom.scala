@@ -1,121 +1,115 @@
 package torchrec.models.multi_task
 
 import org.bytedeco.pytorch._
+import org.bytedeco.pytorch.nn.Module
+import org.bytedeco.pytorch.nn.modules._
+import org.bytedeco.pytorch.nn.modules.container._
+import org.bytedeco.pytorch.nn.options._
+import org.bytedeco.pytorch.optim._
+import org.bytedeco.pytorch.data.datasets._
+import org.bytedeco.pytorch.data.options._
+import org.bytedeco.pytorch.data.sampler._
+import org.bytedeco.pytorch.distributed._
 import org.bytedeco.pytorch.global.torch
-import org.bytedeco.pytorch.global.torch.ScalarType
+
 import torchrec.basic.features._
 import torchrec.basic.layers.{EmbeddingLayer, MLP, PredictionLayer}
 import torchrec.utils.DeviceSupport
 
+import scala.collection.mutable
+
 /**
- * SharedBottom - Shared Bottom Multi-Task Learning Model
+ * SharedBottom — Caruana 1997 multi-task baseline.
  *
- * Full implementation matching the Python torch_rechub SharedBottom model.
- * Uses a shared bottom network with task-specific towers.
+ * Mirrors the Python reference: one shared bottom MLP, then per-task towers
+ * and prediction layers stored in `ModuleListImpl`s.
  *
  * Reference:
  *   Caruana, R. (1997). Multitask learning. Machine learning, 28(1), 41-75.
  *
- * Architecture:
- *   - Shared Bottom MLP: Common feature extractor for all tasks
- *   - Task-specific Towers: Task-specific output predictors - stored in Map for type-safe access
- *   - Prediction Layers: Apply sigmoid for classification, pass-through for regression - stored in Map for type-safe access
- *
- * @param features List of features for bottom
- * @param taskTypes List of task types: "classification" or "regression"
- * @param bottomParams MLP parameters for bottom: dims, activation, dropout
- * @param towerParamsList List of tower params dict (one per task)
- * @param device Device for computation
+ * @param features        List of feature columns.
+ * @param taskTypes       Per-task type: `"classification"` or `"regression"`.
+ * @param bottomParams    Shared bottom MLP params (kept `output_layer=False`).
+ * @param towerParamsList Per-task tower params.
+ * @param device          Device for parameters.
  */
 class SharedBottom(
-                    features: List[Feature],
-                    taskTypes: List[String],
-                    bottomParams: Map[String, Any] = Map(),
-                    towerParamsList: List[Map[String, Any]] = List(),
-                    device: String = DeviceSupport.backend
-                  ) extends Module {
+  features: List[Feature],
+  taskTypes: List[String],
+  bottomParams: Map[String, Any] = Map(),
+  towerParamsList: List[Map[String, Any]] = List(),
+  device: String = DeviceSupport.backend
+) extends Module {
 
-  require(features.nonEmpty, "features cannot be empty")
-  require(taskTypes.nonEmpty, "taskTypes cannot be empty")
+  require(features.nonEmpty, "SharedBottom: features cannot be empty")
+  require(taskTypes.nonEmpty, "SharedBottom: taskTypes cannot be empty")
   require(taskTypes.forall(t => t == "classification" || t == "regression"),
-    "taskTypes must be 'classification' or 'regression'")
-  require(towerParamsList.size == taskTypes.size || towerParamsList.isEmpty,
-    "towerParamsList length must match taskTypes size")
+    "SharedBottom: taskTypes must be 'classification' or 'regression'")
 
-  private val targetDevice = new Device(device)
-  private val nTask = taskTypes.size
-
-  // Feature dimensions
+  private val nTask: Int = taskTypes.size
   private val bottomDims: Int = features.map(_.embedDim).sum
 
-  // Embedding layer
+  private val bottomDimsList: List[Long] =
+    bottomParams.getOrElse("dims", List(128L)).asInstanceOf[List[Long]]
+  private val bottomActivation: String =
+    bottomParams.getOrElse("activation", "relu").asInstanceOf[String]
+  private val bottomDropout: Float =
+    bottomParams.getOrElse("dropout", 0.0f).asInstanceOf[Float]
+  private val towerLast: Long = bottomDimsList.last
+
   private val embedding = new EmbeddingLayer(features, features.head.embedDim, device)
   register_module("embedding", embedding)
 
-  // Bottom MLP (shared)
-  private val bottomMlp: MLP = {
-    val dims = bottomParams.getOrElse("dims", List(128L)).asInstanceOf[List[Long]]
-    val activation = bottomParams.getOrElse("activation", "relu").asInstanceOf[String]
-    val dropout = bottomParams.getOrElse("dropout", 0.0f).asInstanceOf[Float]
-    new MLP(bottomDims, dims, dims.last, activation, dropout, outputLayer = false, device = device)
-  }
+  // Single shared bottom MLP — `output_layer=False` as the Python mandates.
+  private val bottomMlp: MLP = new MLP(
+    bottomDims, bottomDimsList, towerLast, bottomActivation, bottomDropout,
+    outputLayer = false, device = device)
   register_module("bottom_mlp", bottomMlp)
 
-  // Tower dims
-  private val towerDims = bottomParams.getOrElse("dims", List(128L)).asInstanceOf[List[Long]].last
-
-  // ====== Store typed references in Map for type-safe Scala access ======
-  // Towers - Map for type-safe access
-  private val towersMap: Map[String, MLP] = (0 until nTask).map { i =>
-    val name = s"tower_$i"
+  // Towers — mirrors `nn.ModuleList(MLP(...) for i in range(n_task))`.
+  private val towers: ModuleListImpl = new ModuleListImpl()
+  for (i <- 0 until nTask) {
     val params = if (towerParamsList.isEmpty) Map[String, Any]() else towerParamsList(i)
-    val dims = params.getOrElse("dims", List(towerDims)).asInstanceOf[List[Long]]
+    val dims = params.getOrElse("dims", List(towerLast)).asInstanceOf[List[Long]]
     val activation = params.getOrElse("activation", "relu").asInstanceOf[String]
     val dropout = params.getOrElse("dropout", 0.0f).asInstanceOf[Float]
-    val tower = new MLP(towerDims, dims, 1, activation, dropout, outputLayer = true, device = device)
-    register_module(name, tower)
-    (name, tower)
-  }.toMap
+    val m = new MLP(towerLast, dims, 1L, activation, dropout, outputLayer = true, device = device)
+    register_module(s"tower_$i", m)
+    towers.push_back(m)
+  }
 
-  // Prediction layers - Map for type-safe access
-  private val predictLayersMap: Map[String, PredictionLayer] = (0 until nTask).map { i =>
-    val name = s"predictLayer_$i"
-    val predictLayer = new PredictionLayer(taskTypes(i))
-    register_module(name, predictLayer)
-    (name, predictLayer)
-  }.toMap
+  // Prediction layers — mirrors `nn.ModuleList(PredictionLayer(...) for task_type in task_types)`.
+  private val predictLayers: ModuleListImpl = new ModuleListImpl()
+  for (i <- 0 until nTask) {
+    val m = new PredictionLayer(taskTypes(i))
+    register_module(s"predictLayer_$i", m)
+    predictLayers.push_back(m)
+  }
 
   def forward(x: Map[String, Tensor]): Tensor = {
-    // Embedding
-    val inputBottom = embedding.forward(sparseFeats = x, sequenceFeats = Map(), squeeze = true)
+    val inputBottom = embedding.forward(sparseFeats = x, sequenceFeats = Map.empty, squeeze = true)
+    val shared = bottomMlp.forward(inputBottom)
 
-    // Bottom
-    val bottomOut = bottomMlp.forward(inputBottom)
-
-    // Tower and prediction outputs
-    val outputs = (0 until nTask).map { i =>
-      val tower = towersMap(s"tower_$i")
-      val predictLayer = predictLayersMap(s"predictLayer_$i")
-      val towerOut = tower.forward(bottomOut)
-      predictLayer.forward(towerOut)
+    val ys = mutable.ArrayBuffer[Tensor]()
+    var i = 0
+    while (i < nTask) {
+      val towerOut = towers.get(i).forward(shared)
+      ys += predictLayers.get(i).forward(towerOut)
+      i += 1
     }
-
-    // Concatenate: torch.cat(ys, dim=1)
-    torch.cat(new TensorVector(outputs: _*), 1)
+    torch.cat(new TensorVector(ys.toSeq: _*), 1L)
   }
 }
 
 /**
- * SharedBottom companion object with factory methods.
+ * SharedBottom factory — identical to the constructor.
  */
 object SharedBottom {
   def apply(
-             features: List[Feature],
-             taskTypes: List[String] = List("classification"),
-             bottomParams: Map[String, Any] = Map("dims" -> List(128L), "activation" -> "relu", "dropout" -> 0.0f),
-             towerParamsList: List[Map[String, Any]] = List(),
-             device: String = DeviceSupport.backend
-           ): SharedBottom = {
-    new SharedBottom(features, taskTypes, bottomParams, towerParamsList, device)
-  }
+    features: List[Feature],
+    taskTypes: List[String] = List("classification"),
+    bottomParams: Map[String, Any] = Map("dims" -> List(128L), "activation" -> "relu", "dropout" -> 0.0f),
+    towerParamsList: List[Map[String, Any]] = List(),
+    device: String = DeviceSupport.backend
+  ): SharedBottom = new SharedBottom(features, taskTypes, bottomParams, towerParamsList, device)
 }

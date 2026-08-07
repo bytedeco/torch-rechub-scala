@@ -43,7 +43,7 @@ object RankingDIN {
     val model = new DIN(
       features = features,
       sequenceFeatures = sequenceFeatures,
-      embedDim = 8,
+//      embedDim = 8,
       mlpDims = List(128L, 64L),
       attentionUnits = 32
     )

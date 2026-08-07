@@ -1,6 +1,15 @@
 package torchrec.models.multi_task
 
 import org.bytedeco.pytorch._
+import org.bytedeco.pytorch.nn.Module
+import org.bytedeco.pytorch.nn.modules._
+import org.bytedeco.pytorch.nn.modules.container._
+import org.bytedeco.pytorch.nn.options._
+import org.bytedeco.pytorch.optim._
+import org.bytedeco.pytorch.data.datasets._
+import org.bytedeco.pytorch.data.options._
+import org.bytedeco.pytorch.data.sampler._
+import org.bytedeco.pytorch.distributed._
 import org.bytedeco.pytorch.global.torch
 import org.bytedeco.pytorch.global.torch.ScalarType
 import torchrec.basic.features._
@@ -224,7 +233,7 @@ class MetaEmbedding(
   embeddingImpl.to(targetDevice, false)
   register_module("embedding", embeddingImpl)
 
-  def forward(x: Tensor): Tensor = {
+  override def forward(x: Tensor): Tensor = {
     embeddingImpl.forward(x).to(targetDevice, ScalarType.Float)
   }
 
@@ -248,7 +257,7 @@ class MetaLinear(
   linear.to(targetDevice, false)
   register_module("linear", linear)
 
-  def forward(x: Tensor): Tensor = {
+  override def forward(x: Tensor): Tensor = {
     linear.forward(x).to(targetDevice, ScalarType.Float)
   }
 

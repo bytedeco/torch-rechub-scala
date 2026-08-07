@@ -1,6 +1,9 @@
 package torchrec.distributed
 
-import org.bytedeco.pytorch.{Module, *}
+import org.bytedeco.pytorch.{*}
+import org.bytedeco.pytorch.optim._
+import org.bytedeco.pytorch.distributed._
+import org.bytedeco.pytorch.nn.Module
 import org.bytedeco.pytorch.global.torch as pt
 import org.bytedeco.pytorch.global.torch.DeviceType
 

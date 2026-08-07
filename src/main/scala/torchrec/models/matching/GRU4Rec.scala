@@ -1,6 +1,15 @@
 package torchrec.models.matching
 
 import org.bytedeco.pytorch._
+import org.bytedeco.pytorch.nn.Module
+import org.bytedeco.pytorch.nn.modules._
+import org.bytedeco.pytorch.nn.modules.container._
+import org.bytedeco.pytorch.nn.options._
+import org.bytedeco.pytorch.optim._
+import org.bytedeco.pytorch.data.datasets._
+import org.bytedeco.pytorch.data.options._
+import org.bytedeco.pytorch.data.sampler._
+import org.bytedeco.pytorch.distributed._
 import org.bytedeco.pytorch.global.torch
 import org.bytedeco.pytorch.global.torch.ScalarType
 import torchrec.basic.features._
@@ -165,7 +174,7 @@ class GRU4Rec(
     }
 
     // Pass through GRU: take only the last hidden state
-    val gruOutput = gru.forward(historyEmb)
+    val gruOutput = gru.forwardT_TensorTensor_T(historyEmb)
     val gruHidden = gruOutput.get1 // hidden state tensor
     val lastHidden = gruHidden.select(0, numLayers - 1) // hidden[-1]
 

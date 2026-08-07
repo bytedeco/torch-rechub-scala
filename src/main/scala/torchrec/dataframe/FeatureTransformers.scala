@@ -3,7 +3,6 @@ package torchrec.dataframe
 import scala.collection.mutable
 import scala.math.*
 import scala.math.Fractional.Implicits.infixFractionalOps
-import scala.math.Fractional.Implicits.infixFractionalOps
 import scala.math.Integral.Implicits.infixIntegralOps
 import scala.math.Numeric.Implicits.infixNumericOps
 // ============================================================================

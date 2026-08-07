@@ -5,139 +5,179 @@ import torchrec.basic.layers._
 import torchrec.utils.DeviceSupport
 
 import org.bytedeco.pytorch._
+import org.bytedeco.pytorch.nn.Module
+import org.bytedeco.pytorch.nn.modules._
+import org.bytedeco.pytorch.nn.modules.container._
+import org.bytedeco.pytorch.nn.options._
+import org.bytedeco.pytorch.optim._
+import org.bytedeco.pytorch.data.datasets._
+import org.bytedeco.pytorch.data.options._
+import org.bytedeco.pytorch.data.sampler._
+import org.bytedeco.pytorch.distributed._
 import org.bytedeco.pytorch.global.torch
 import org.bytedeco.pytorch.global.torch.ScalarType
 
-//import torchrec.toTensorVector
 import torchrec.Implicits._
 
 /**
- * Deep Interest Network with Attention
- * Reference: Alibaba, KDD 2018
+ * Deep Interest Network (Alibaba, KDD'2018).
+ *
+ * Mirrors the Python `torch-rechub` reference: one `ActivationUnit` per
+ * history feature, stored in a `nn.ModuleList`/`ModuleListImpl`, and a top
+ * MLP that consumes the flattened attention-pooled history, flattened target
+ * features and flattened context features.
+ *
+ * Reference: https://arxiv.org/abs/1706.06978
+ *
+ * @param features         Context / user-profile features.
+ * @param sequenceFeatures Per-field history sequence features.
+ * @param mlpDims          Hidden dims for the top MLP.
+ * @param dropout          Dropout for the top MLP.
+ * @param attentionUnits   Hidden dim of each `ActivationUnit`'s MLP (default 36,
+ *                         matching the Python's `dims = [36]`).
+ * @param device           Device for parameters.
  */
 class DIN(
   features: List[Feature],
   sequenceFeatures: List[SequenceFeature],
-  embedDim: Int = 8,
   mlpDims: List[Long] = List(256L, 128L),
   dropout: Float = 0.2f,
-  attentionUnits: Int = 64,
+  attentionUnits: Int = 36,
   device: String = DeviceSupport.backend
 ) extends Module {
 
-  // Embedding layers
-  private val featureEmbedding = new EmbeddingLayer(features, embedDim, device)
-  register_module("featureEmbedding", featureEmbedding)
+  /** Backward-compatible secondary constructor: pre-rewrite signature
+   *  `new DIN(features, sequenceFeatures, embedDim, mlpDims, dropout, attentionUnits, device)`. */
+  def this(
+    features: List[Feature],
+    sequenceFeatures: List[SequenceFeature],
+    embedDim: Int,
+    mlpDims: List[Long],
+    dropout: Float,
+    attentionUnits: Int,
+    device: String
+  ) = this(features, sequenceFeatures, mlpDims, dropout, attentionUnits, device)
 
-  private val sequenceEmbedding = new EmbeddingLayer(sequenceFeatures, embedDim, device)
-  register_module("sequenceEmbedding", sequenceEmbedding)
+  require(features.nonEmpty, "DIN: features cannot be empty")
+  require(sequenceFeatures.nonEmpty, "DIN: sequenceFeatures cannot be empty")
 
-  // Attention network
-  private val attentionNet = new AttentionNet(embedDim, attentionUnits, embedDim, device)
-  register_module("attentionNet", attentionNet)
+  private val contextDim: Int = features.map(_.embedDim).sum
+  private val historyDim: Int = sequenceFeatures.map(_.embedDim).sum
+  private val targetDim: Int = historyDim
+  private val allDims: Int = contextDim + historyDim + targetDim
 
-  // MLP
-  private val totalDim = Features.calcSparseDim(features) +
-                          sequenceFeatures.map(_.embedDim).sum
-  private val mlp = new MLP(totalDim, mlpDims.map(_.toLong), 1, "relu", dropout, device = device)
+  private val embedding = new EmbeddingLayer(
+    features ++ sequenceFeatures ++ sequenceFeatures /* targets share with history */,
+    device = device)
+  register_module("embedding", embedding)
+
+  // One ActivationUnit per history feature — mirrors
+  // `nn.ModuleList([ActivationUnit(fea.embed_dim, **attention_mlp_params) for ...])`.
+  private val attentionLayers: ModuleListImpl = new ModuleListImpl()
+  for (sf <- sequenceFeatures) {
+    val unit = new ActivationUnit(sf.embedDim, attentionUnits, device)
+    register_module(s"attentionUnit_${sf.name}", unit)
+    attentionLayers.push_back(unit)
+  }
+
+  // Top MLP over the concatenated [attention-pooled, target, context] vector.
+  private val mlp = new MLP(allDims.toLong, mlpDims.map(_.toLong), 1L, "dice", dropout, device = device)
   register_module("mlp", mlp)
 
+  /** Primary forward — per-field target feature map (matches the Python API). */
   def forward(
     sparseFeats: Map[String, Tensor],
     sequenceFeats: Map[String, Tensor],
-    targetIdx: Tensor  // (batch, 1) - the item to attend to
+    targetFeats: Map[String, Tensor]
   ): Tensor = {
-    // Get feature embeddings
-    val featEmb = featureEmbedding.forward(sparseFeats)
+    val (pooled, flatTarget) = computeAttentions(sparseFeats, sequenceFeats, targetFeats)
+    val embedCtx = embedding.forward(sparseFeats = sparseFeats, sequenceFeats = Map.empty, squeeze = true)
+    val mlpIn = torch.cat(new TensorVector(
+      pooled.flatten(1L, 2L), flatTarget, embedCtx), 1L)
+    mlp.forward(mlpIn).squeeze(1L)
+  }
 
-    // Get sequence embeddings and apply attention
-    val seqEmbs = sequenceFeatures.map { seqFeat =>
-      val seqEmb = sequenceEmbedding.getSequenceEmbedding(seqFeat.name, sequenceFeats(seqFeat.name))
-      // seqEmb: (batch, seq_len, embed_dim)
+  /** Backward-compat overload — single target index broadcast over every
+   *  history field. Used by CTRTrainer. */
+  def forward(
+    sparseFeats: Map[String, Tensor],
+    sequenceFeats: Map[String, Tensor],
+    targetIdx: Tensor
+  ): Tensor = {
+    val targetFeats = sequenceFeatures.map(sf => sf.name -> targetIdx).toMap
+    forward(sparseFeats, sequenceFeats, targetFeats)
+  }
 
-      // Expand target to same sequence length
-      val targetEmb = sequenceEmbedding.getSequenceEmbedding(seqFeat.name, targetIdx.toType(ScalarType.Long))
-      // Ensure targetEmb is (batch, 1, embed_dim) or (batch, embed_dim) then expand to (batch, seq_len, embed_dim)
-      val targetFlat = if (targetEmb.dim() == 3L) targetEmb.squeeze(1) else if (targetEmb.dim() == 2L) targetEmb else targetEmb.mean(1)
-      val targetExpanded = targetFlat.unsqueeze(1).expand(targetFlat.size(0), seqEmb.size(1), targetFlat.size(1))
+  /** Shared computation: returns (attentionPooled: B*H*D, flatTarget: B*targetDim). */
+  private def computeAttentions(
+    sparseFeats: Map[String, Tensor],
+    sequenceFeats: Map[String, Tensor],
+    targetFeats: Map[String, Tensor]
+  ): (Tensor, Tensor) = {
+    // History per field, each (batch, seqLen, embedDim).
+    val historyByName = sequenceFeatures.map { sf =>
+      sf.name -> embedding.forward(sparseFeats = Map.empty,
+        sequenceFeats = Map(sf.name -> sequenceFeats(sf.name)),
+        squeeze = false).select(1L, 0L)
+    }.toMap
 
-      // Attention
-      val attended = attentionNet.forward(seqEmb, targetExpanded)
-      // attended: (batch, embed_dim)
-      attended
+    // Target per field, each (batch, embedDim).
+    val targetByName = sequenceFeatures.map { sf =>
+      sf.name -> embedding.forward(sparseFeats = Map.empty,
+        sequenceFeats = Map(sf.name -> targetFeats(sf.name)),
+        squeeze = false).select(1L, 0L).squeeze(1L)
+    }.toMap
+
+    // attention_pooling list → (batch, num_history_fields, embedDim).
+    val pooled = scala.collection.mutable.ArrayBuffer[Tensor]()
+    var i = 0
+    while (i < sequenceFeatures.size) {
+      val sf = sequenceFeatures(i)
+      val h = historyByName(sf.name)
+      val t = targetByName(sf.name)
+      val att = attentionLayers.get(i).forward(h, t)        // (batch, embedDim)
+      pooled += att.unsqueeze(1L)
+      i += 1
     }
+    val attentionPooled = torch.cat(new TensorVector(pooled.toSeq: _*), 1L) // (batch, H, embedDim)
 
-    val combined = if (seqEmbs.nonEmpty) {
-      torch.cat((featEmb +: seqEmbs).toTensorVector,  1)
-    } else {
-      featEmb
-    }
-
-    val logits = mlp.forward(combined)
-    logits
+    val flatTarget = torch.cat(new TensorVector(
+      sequenceFeatures.map(sf => targetByName(sf.name).unsqueeze(1L)): _*), 1L).view(-1L, targetDim.toLong)
+    (attentionPooled, flatTarget)
   }
 }
 
 /**
- * Attention network for DIN
+ * Activation Unit — DIN's per-position target attention sublayer.
+ *
+ * Mirrors the Python reference: `MLP(4 * emb_dim, dims=[36], activation="dice")`
+ * applied to `[target, history, target - history, target * history]`.
+ *
+ * Shape
+ * -----
+ * Input  history: (batch, seqLen, embedDim)
+ * Input  target : (batch, embedDim)
+ * Output        : (batch, embedDim)  — softmax-weighted sum over the sequence.
  */
-class AttentionNet(
-  queryDim: Int,
-  hiddenUnits: Int,
-  outputDim: Int,
+class ActivationUnit(
+  embedDim: Int,
+  hiddenUnits: Int = 36,
   device: String = DeviceSupport.backend
 ) extends Module {
 
-  private val queryProj = new LinearImpl(queryDim * 2, hiddenUnits)
-  private val keyProj = new LinearImpl(queryDim * 2, hiddenUnits)
-  private val valueProj = new LinearImpl(queryDim, outputDim)
-  private val attentionNet = new MLP(hiddenUnits, List(1L), 1L, "relu", 0f, false, false, false, device)
+  private val attention = new MLP((4 * embedDim).toLong, List(hiddenUnits.toLong), 1L, "dice", 0.0f,
+    device = device)
+  register_module("attention", attention)
 
-  register_module("queryProj", queryProj)
-  register_module("keyProj", keyProj)
-  register_module("valueProj", valueProj)
-  register_module("attentionNet", attentionNet)
-
-  if (device != "cpu") {
-    val dev = new org.bytedeco.pytorch.Device(device)
-    queryProj.to(dev, false)
-    keyProj.to(dev, false)
-    valueProj.to(dev, false)
-  }
-
-  def forward(sequence: Tensor, target: Tensor): Tensor = {
-    // sequence: (batch, seq_len, embed)
-    // target: (batch, seq_len, embed)
-    val batchSize = sequence.size(0)
-    val seqLen = sequence.size(1)
-
-    // Concat sequence and target along dim 2
-    val combined = torch.cat(new TensorVector(sequence, target), 2) // (batch, seq_len, embed*2)
-
-    // Project to hidden dim
-    val query = queryProj.forward(combined)
-    val key = keyProj.forward(combined)
-    val values = valueProj.forward(sequence)
-
-    // Dot product attention
-    val scores = query.mul(key).sum(2).unsqueeze(2).div(new Scalar(scala.math.sqrt(query.size(2).toDouble).toFloat))
-    val attnWeights = scores.softmax(1)
-
-    // Weighted sum
-    val attended = values.mul(attnWeights).sum(1)
-    attended
-  }
-}
-
-/**
- * Dice activation
- */
-class DiceActivation extends Module {
-  private var P = 0.0f
-  private val eps = 1e-8f
-
-  def forward(x: Tensor): Tensor = {
-    val p = x.sigmoid()
-    p.mul(x).add(p.neg().add(torch.ones_like(p)).mul(x))
+  override def forward(history: Tensor, target: Tensor): Tensor = {
+    val seqLen = history.size(1)
+    // Expand target across the sequence: (batch, seqLen, embedDim).
+    val targetExp = target.unsqueeze(1L).expand(-1L, seqLen, -1L)
+    val attInput = torch.cat(new TensorVector(targetExp, history,
+      targetExp.sub(history), targetExp.mul(history)), 2L) // (batch, seqLen, 4*embedDim)
+    val flat = attInput.view(-1L, (4 * embedDim).toLong)
+    val scores = attention.forward(flat).view(-1L, seqLen) // (batch, seqLen)
+    val weights = scores.softmax(1L).unsqueeze(-1L)        // (batch, seqLen, 1)
+    weights.mul(history).sum(1L)                            // (batch, embedDim)
   }
 }

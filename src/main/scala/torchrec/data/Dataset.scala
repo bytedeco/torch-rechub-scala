@@ -1,13 +1,22 @@
 package torchrec.data
 
 import org.bytedeco.pytorch._
+import org.bytedeco.pytorch.nn.Module
+import org.bytedeco.pytorch.nn.modules._
+import org.bytedeco.pytorch.nn.modules.container._
+import org.bytedeco.pytorch.nn.options._
+import org.bytedeco.pytorch.optim._
+import org.bytedeco.pytorch.data._
+import org.bytedeco.pytorch.data.datasets._
+import org.bytedeco.pytorch.data.options._
+import org.bytedeco.pytorch.data.sampler._
+import org.bytedeco.pytorch.distributed._
 import org.bytedeco.pytorch.global.torch
+import org.bytedeco.pytorch.c10.SizeTArrayRef
 
 import scala.jdk.CollectionConverters._
 import scala.collection.mutable
 import torchrec.Implicits._
-import org.bytedeco.pytorch._
-import org.bytedeco.pytorch.global.torch
 
 /**
  * Base trait for datasets
@@ -18,21 +27,6 @@ trait Dataset {
 }
 
 object Dataset {
-  import org.bytedeco.pytorch._
-
-  // Wrap a JavaDataset (Example-based) as a Scala Dataset
-  private class JavaDatasetWrapper(javaDs: JavaDataset, order: Seq[String]) extends Dataset {
-    override def size: Long = try { javaDs.size().get() } catch { case _: Throwable => 0L }
-
-    override def get(index: Long): Batch = {
-      try {
-        val ex = javaDs.get(index)
-        Batch.fromExample(ex, order)
-      } catch {
-        case _: Throwable => Batch.fromExample(javaDs.get(0L), order)
-      }
-    }
-  }
 
   // Wrap a JavaTensorDataset (TensorExample-based) as a Scala Dataset
   private class JavaTensorDatasetWrapper(javaDs: JavaTensorDataset, order: Seq[String]) extends Dataset {
@@ -48,71 +42,41 @@ object Dataset {
     }
   }
 
-  // Stream dataset wrapper: sequential access backed by JavaStreamDataset.get_batch
-  private class JavaStreamDatasetWrapper(javaDs: JavaStreamDataset, order: Seq[String], fetchSize: Int = 32) extends Dataset {
-    private var buffer = Seq.empty[Batch]
-    private var baseIndex: Long = 0L
-
-    override def size: Long = try { javaDs.size().get() } catch { case _: Throwable => 0L }
-
-    override def get(index: Long): Batch = synchronized {
-      if (index < baseIndex) {
-        // cannot seek backwards in stream; not supported
-        throw new UnsupportedOperationException("JavaStreamDataset wrapper does not support seeking backwards")
-      }
-
-      while (index >= baseIndex + buffer.length) {
-        val vec = try { javaDs.get_batch(fetchSize) } catch { case _: Throwable => new ExampleVector() }
-        val batches = Batch.fromExampleVector(vec, order)
-        buffer = buffer ++ batches
-      }
-
-      buffer((index - baseIndex).toInt)
-    }
-  }
-
-  // Stateful dataset wrapper: uses get_batch on JavaStatefulDataset and supports reset
-  private class JavaStatefulDatasetWrapper(javaDs: JavaStatefulDataset, order: Seq[String], fetchSize: Int = 32) extends Dataset {
-    private var buffer = Seq.empty[Batch]
-    private var baseIndex: Long = 0L
-
-    override def size: Long = try { javaDs.size().get() } catch { case _: Throwable => 0L }
-
-    override def get(index: Long): Batch = synchronized {
-      if (index < baseIndex) {
-        try { javaDs.reset() } catch { case _: Throwable => () }
-        buffer = Seq.empty
-        baseIndex = 0L
-      }
-
-      while (index >= baseIndex + buffer.length) {
-        val opt = try { javaDs.get_batch(fetchSize) } catch { case _: Throwable => null }
-        val vec = if (opt == null) new ExampleVector() else try { opt.get() } catch { case _: Throwable => new ExampleVector() }
-        val batches = Batch.fromExampleVector(vec, order)
-        buffer = buffer ++ batches
-      }
-
-      buffer((index - baseIndex).toInt)
-    }
-  }
-
   // Factory helpers
-  def fromJavaDataset(javaDs: JavaDataset, order: Seq[String]): Dataset = new JavaDatasetWrapper(javaDs, order)
-
   def fromJavaTensorDataset(javaDs: JavaTensorDataset, order: Seq[String]): Dataset = new JavaTensorDatasetWrapper(javaDs, order)
 
-  def fromJavaStreamDataset(javaDs: JavaStreamDataset, order: Seq[String], fetchSize: Int = 32): Dataset = new JavaStreamDatasetWrapper(javaDs, order, fetchSize)
-
-  def fromJavaStatefulDataset(javaDs: JavaStatefulDataset, order: Seq[String], fetchSize: Int = 32): Dataset = new JavaStatefulDatasetWrapper(javaDs, order, fetchSize)
-
-  // Convenience: convert Scala Dataset to JavaDataset using the existing adapters
-  def toJavaDataset(backing: Dataset): JavaDataset = JavaDatasetAdapters.createDatasetAdapter(backing)
-
-  def toJavaTensorDataset(backing: Dataset): JavaTensorDataset = JavaTensorDatasetAdapters.createTensorDatasetAdapter(backing)
-
-  def toJavaStatefulDataset(backing: Dataset): JavaStatefulDataset = JavaDatasetAdapters.createStatefulDatasetAdapter(backing)
-
-  def toJavaStreamDataset(backing: Dataset): JavaStreamDataset = JavaDatasetAdapters.createStreamDatasetAdapter(backing)
+  // Convenience: convert Scala Dataset to JavaTensorDataset using a basic adapter
+  def toJavaTensorDataset(backing: Dataset): JavaTensorDataset = {
+    new JavaTensorDataset() {
+      override def get(index: Long): TensorExample = {
+        val b = backing.get(index)
+        Batch.toTensorExample(b, backing match {
+          case td: TensorDataset => td.sparseFeatures.keys.toSeq.sorted
+          case sd: SequenceDataset => sd.features.keys.toSeq.sorted
+          case md: MatchingDataset => md.userFeatures.keys.toSeq.sorted
+          case _ => Seq.empty[String]
+        })
+      }
+      override def size(): org.bytedeco.pytorch.SizeTOptional = new org.bytedeco.pytorch.SizeTOptional(backing.size)
+      override def get_batch(indices: SizeTArrayRef): TensorExampleVector = {
+        val vec = new TensorExampleVector()
+        val len = indices.size().toInt
+        var i = 0
+        while (i < len) {
+          val idx = indices.get(i)
+          val b = backing.get(idx)
+          vec.push_back(Batch.toTensorExample(b, backing match {
+            case td: TensorDataset => td.sparseFeatures.keys.toSeq.sorted
+            case sd: SequenceDataset => sd.features.keys.toSeq.sorted
+            case md: MatchingDataset => md.userFeatures.keys.toSeq.sorted
+            case _ => Seq.empty[String]
+          }))
+          i += 1
+        }
+        vec
+      }
+    }
+  }
 }
 
 /**
@@ -226,22 +190,12 @@ object Batch {
     (sparseMap, denseMap, labelTensor)
   }
 
-  // Convert a single Batch to an Example (Example.data is a 1-D Long tensor of feature indices)
-  def toExample(batch: Batch, sparseOrder: Seq[String], denseOrder: Seq[String] = Seq.empty, includeLabel: Boolean = false): Example = {
-    new Example(packBatchToIndexTensor(batch, sparseOrder, denseOrder, includeLabel))
-  }
-
+  // Convert a single Batch to a TensorExample
   def toTensorExample(batch: Batch, sparseOrder: Seq[String], denseOrder: Seq[String] = Seq.empty, includeLabel: Boolean = false): TensorExample = {
     new TensorExample(packBatchToIndexTensor(batch, sparseOrder, denseOrder, includeLabel))
   }
 
-  // Convert Example/TensorExample back to Batch using provided feature order
-  def fromExample(ex: Example, sparseOrder: Seq[String], denseOrder: Seq[String] = Seq.empty, includeLabel: Boolean = false): Batch = {
-    val data = try { ex.data() } catch { case _: Throwable => ex.data() }
-    val (sparse, dense, label) = unpackIndexTensorToMaps(data, sparseOrder, denseOrder, includeLabel)
-    Batch(sparse, dense, Map.empty, label)
-  }
-
+  // Convert TensorExample back to Batch using provided feature order
   def fromTensorExample(te: TensorExample, sparseOrder: Seq[String], denseOrder: Seq[String] = Seq.empty, includeLabel: Boolean = false): Batch = {
     val data = try { te.data() } catch { case _: Throwable => te.data() }
     val (sparse, dense, label) = unpackIndexTensorToMaps(data, sparseOrder, denseOrder, includeLabel)
@@ -249,20 +203,9 @@ object Batch {
   }
 
   // Vectors
-  def fromExampleVector(vec: ExampleVector, order: Seq[String]): Seq[Batch] = {
-    val n = vec.size().toInt
-    (0 until n).map(i => fromExample(vec.get(i), order))
-  }
-
   def fromTensorExampleVector(vec: TensorExampleVector, order: Seq[String]): Seq[Batch] = {
     val n = vec.size().toInt
     (0 until n).map(i => fromTensorExample(vec.get(i), order))
-  }
-
-  def toExampleVector(batches: Seq[Batch], order: Seq[String]): ExampleVector = {
-    val vec = new ExampleVector()
-    batches.foreach(b => vec.push_back(toExample(b, order)))
-    vec
   }
 
   def toTensorExampleVector(batches: Seq[Batch], order: Seq[String]): TensorExampleVector = {
@@ -303,7 +246,7 @@ class TensorDataset(
   }
 
   // Convenience: produce a JavaTensorDataset adapter for use with JavaCPP DataLoaders
-  def asJavaTensorDataset(): JavaTensorDataset = JavaTensorDatasetAdapters.createTensorDatasetAdapter(this)
+  def asJavaTensorDataset(): JavaTensorDataset = Dataset.toJavaTensorDataset(this)
 }
 
 /**
@@ -340,9 +283,6 @@ class SequenceDataset(
       itemFeatures.map(m => m.map { case (k, v) => k -> v.select(0, index) }).getOrElse(Map.empty)
     )
   }
-
-  def asJavaDataset(): JavaDataset = JavaDatasetAdapters.createDatasetAdapter(this)
-  def asJavaStatefulDataset(): JavaStatefulDataset = JavaDatasetAdapters.createStatefulDatasetAdapter(this)
 }
 
 /**
@@ -389,8 +329,7 @@ class MatchingDataset(
     )
   }
 
-  def asJavaDataset(): JavaDataset = JavaDatasetAdapters.createDatasetAdapter(this)
-  def asJavaTensorDataset(): JavaTensorDataset = JavaTensorDatasetAdapters.createTensorDatasetAdapter(this)
+  def asJavaTensorDataset(): JavaTensorDataset = Dataset.toJavaTensorDataset(this)
 }
 
 /**
@@ -414,6 +353,4 @@ class MultiTaskDataset(
       taskLabels = Some(taskLabels.map { case (k, v) => k -> v.select(0, index) })
     )
   }
-
-  def asJavaDataset(): JavaDataset = JavaDatasetAdapters.createDatasetAdapter(this)
 }

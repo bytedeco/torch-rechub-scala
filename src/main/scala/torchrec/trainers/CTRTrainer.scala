@@ -1,8 +1,18 @@
 package torchrec.trainers
 
 import org.bytedeco.pytorch.*
+import org.bytedeco.pytorch.nn.Module
+import org.bytedeco.pytorch.nn.modules.*
+import org.bytedeco.pytorch.nn.modules.container.*
+import org.bytedeco.pytorch.nn.options.*
+import org.bytedeco.pytorch.optim.*
+import org.bytedeco.pytorch.data.datasets.*
+import org.bytedeco.pytorch.data.options.*
+import org.bytedeco.pytorch.data.sampler.*
+import org.bytedeco.pytorch.distributed.*
 import org.bytedeco.pytorch.global.torch
 import org.bytedeco.pytorch.global.torch.ScalarType
+import org.bytedeco.pytorch.optim.options.AdamOptions
 
 import scala.collection.mutable
 import scala.util.Random
@@ -26,7 +36,7 @@ import torchrec.models.ranking.LiquidNetWork
 import torchrec.models.ranking.xDeepFM
 import torchrec.models.ranking.AutoInt
 import torchrec.models.ranking.FiBiNet
-import torchrec.models.generative.{LLM4Rec, HLLM}
+import torchrec.models.generative.{HLLM, LLM4Rec}
 import torchrec.models.matching.MAMBA
 import torchrec.basic.losses.{BCELoss, BCEWithLogitsLoss}
 

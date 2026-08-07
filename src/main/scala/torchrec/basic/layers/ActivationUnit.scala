@@ -3,6 +3,15 @@ package torchrec.basic.layers
 import torchrec.utils.DeviceSupport
 
 import org.bytedeco.pytorch._
+import org.bytedeco.pytorch.nn.Module
+import org.bytedeco.pytorch.nn.modules._
+import org.bytedeco.pytorch.nn.modules.container._
+import org.bytedeco.pytorch.nn.options._
+import org.bytedeco.pytorch.optim._
+import org.bytedeco.pytorch.data.datasets._
+import org.bytedeco.pytorch.data.options._
+import org.bytedeco.pytorch.data.sampler._
+import org.bytedeco.pytorch.distributed._
 import org.bytedeco.pytorch.global.torch
 import org.bytedeco.pytorch.global.torch.ScalarType
 
@@ -43,7 +52,7 @@ class ActivationUnit(
     linear2.to(dev, false)
   }
 
-  def forward(item1: Tensor, item2: Tensor): Tensor = {
+  override def forward(item1: Tensor, item2: Tensor): Tensor = {
     // item1: [batch, embed_dim], item2: [batch, embed_dim]
     // Element-wise product as "cross" interaction
     val cross = item1.mul(item2)
@@ -90,7 +99,7 @@ class Attention(
     valueProj.to(dev, false)
   }
 
-  def forward(query: Tensor, keys: Tensor, values: Tensor): Tensor = {
+  override def forward(query: Tensor, keys: Tensor, values: Tensor): Tensor = {
     // query: [batch, query_dim]
     // keys: [batch, seq_len, key_dim]
     // values: [batch, seq_len, val_dim]
@@ -135,7 +144,7 @@ class PRelu private[torchrec](
 
   register_parameter("weight", weight)
 
-  def forward(x: Tensor): Tensor = {
+  override def forward(x: Tensor): Tensor = {
     torch.prelu(x, weight)
   }
 }

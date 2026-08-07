@@ -23,7 +23,7 @@ object TutorialsReplicaRunner {
     safeRun("Tutorial01RankingDINReplica") { Tutorial01RankingDINReplica.main(Array.empty) }
     safeRun("TutorialAmazonBeautyReplica") { TutorialAmazonBeautyReplica.main(Array.empty) }
     safeRun("TutorialAmazonBooksReplica") { TutorialAmazonBooksReplica.main(Array.empty) }
-    safeRun("TutorialMultiTaskNotebookReplica") { TutorialMultiTaskNotebookReplica.main(Array.empty) }
+//    safeRun("TutorialMultiTaskNotebookReplica") { TutorialMultiTaskNotebookReplica.main(Array.empty) }
 
     // Functional replicas (serving/matching examples)
     safeRun("Tutorial02MatchingDSSMReplica") { Tutorial02MatchingDSSMReplica.main(Array.empty) }

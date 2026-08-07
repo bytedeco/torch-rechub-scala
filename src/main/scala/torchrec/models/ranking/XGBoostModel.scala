@@ -7,6 +7,15 @@ import torchrec.utils.DeviceSupport
 import torchrec.TorchRec
 
 import org.bytedeco.pytorch._
+import org.bytedeco.pytorch.nn.Module
+import org.bytedeco.pytorch.nn.modules._
+import org.bytedeco.pytorch.nn.modules.container._
+import org.bytedeco.pytorch.nn.options._
+import org.bytedeco.pytorch.optim._
+import org.bytedeco.pytorch.data.datasets._
+import org.bytedeco.pytorch.data.options._
+import org.bytedeco.pytorch.data.sampler._
+import org.bytedeco.pytorch.distributed._
 import org.bytedeco.pytorch.global.torch
 import org.bytedeco.pytorch.global.torch.ScalarType
 
@@ -114,7 +123,7 @@ class SoftDecisionTree(
   leafValues.to(targetDevice, ScalarType.Float)
   register_parameter("leaf_values", leafValues)
 
-  def forward(x: Tensor): Tensor = {
+  override def forward(x: Tensor): Tensor = {
     // Only transfer if not on target device
     val xOnDev = if (!x.device().equals(targetDevice)) {
       x.to(targetDevice, ScalarType.Float)
@@ -170,7 +179,7 @@ class SoftDecisionTree(
 //    tree
 //  }
 //
-//  def forward(
+//  override def forward(
 //    sparseFeats: Map[String, Tensor],
 //    denseFeats: Map[String, Tensor] = Map.empty
 //  ): Tensor = {
@@ -248,7 +257,7 @@ class SoftDecisionTree(
 //  leafValues.to(new Device(device),ScalarType.Float)
 //  register_parameter("leaf_values", leafValues)
 //
-//  def forward(x: Tensor): Tensor = {
+//  override def forward(x: Tensor): Tensor = {
 //    val batchSize = x.size(0).toInt
 //
 //    // 确保输入在正确设备上

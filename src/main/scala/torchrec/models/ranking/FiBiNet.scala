@@ -7,6 +7,15 @@ import torchrec.TensorImplicits.RichTensor
 import torchrec.utils.DeviceSupport
 
 import org.bytedeco.pytorch._
+import org.bytedeco.pytorch.nn.Module
+import org.bytedeco.pytorch.nn.modules._
+import org.bytedeco.pytorch.nn.modules.container._
+import org.bytedeco.pytorch.nn.options._
+import org.bytedeco.pytorch.optim._
+import org.bytedeco.pytorch.data.datasets._
+import org.bytedeco.pytorch.data.options._
+import org.bytedeco.pytorch.data.sampler._
+import org.bytedeco.pytorch.distributed._
 import org.bytedeco.pytorch.global.torch
 
 /**
@@ -62,15 +71,15 @@ class FiBiNet(
     val senetFeatures = senet.forward(embeddings)
 
     // Bilinear interactions on original embeddings: (batch, num_interactions, embed_dim)
-    val biOut1 = bilinear.forward(embeddings, embeddings)
+    val biOut1 = bilinear.forwardPair(embeddings, embeddings)
 
     // Bilinear interactions on SENET-enhanced embeddings: (batch, num_interactions, embed_dim)
-    val biOut2 = bilinear.forward(senetFeatures, embeddings)
+    val biOut2 = bilinear.forwardPair(senetFeatures, embeddings)
 
     // Concatenate both bilinear outputs along dim=1
     // biOut1 and biOut2 are Seq[Tensor], need to stack then concatenate
-    val stacked1 = torch.stack(new TensorVector(biOut1.toSeq: _*), 1L)
-    val stacked2 = torch.stack(new TensorVector(biOut2.toSeq: _*), 1L)
+    val stacked1 = torch.stack(new TensorVector(biOut1*), 1L)
+    val stacked2 = torch.stack(new TensorVector(biOut2*), 1L)
     val combined = torch.cat(new TensorVector(stacked1, stacked2), 1L)
 
     // Flatten and pass through MLP: (batch, num_interactions * 2 * embed_dim)
@@ -113,7 +122,7 @@ class BilinearInteraction(
     }
   }
 
-  def forward(f1: Tensor, f2: Tensor): Seq[Tensor] = {
+  def forwardPair(f1: Tensor, f2: Tensor, r: Boolean =false): Seq[Tensor] = {
     // f1, f2: (batch, num_fields, embed_dim)
     bilinearType match {
       case "field_all" =>

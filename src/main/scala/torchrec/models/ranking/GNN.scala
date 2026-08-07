@@ -1,8 +1,13 @@
 package torchrec.models.ranking
 
 import torchrec.utils.DeviceSupport
-import org.bytedeco.pytorch.Module
 import org.bytedeco.pytorch._
+import org.bytedeco.pytorch.nn.Module
+import org.bytedeco.pytorch.nn.modules._
+import org.bytedeco.pytorch.optim._
+import org.bytedeco.pytorch.data.datasets._
+import org.bytedeco.pytorch.data.options._
+import org.bytedeco.pytorch.distributed._
 import org.bytedeco.pytorch.global.torch
 import org.bytedeco.pytorch.global.torch.ScalarType
 
@@ -39,7 +44,7 @@ class GCN(
     gc2.to(dev, false)
   }
 
-  def forward(
+  override def forward(
     features: Tensor, // (numNodes, numFeatures)
     adj: Tensor // (numNodes, numNodes) adjacency matrix
   ): Tensor = {
@@ -68,7 +73,7 @@ class GraphConvolution(
     weight.to(dev, false)
   }
 
-  def forward(input: Tensor, adj: Tensor): Tensor = {
+  override def forward(input: Tensor, adj: Tensor): Tensor = {
     val support = weight.forward(input)
     val output = torch.matmul(adj, support)
     // Add bias - create on same device as output
@@ -96,7 +101,7 @@ class GAT(
   register_module("att1", att1)
   register_module("att2", att2)
 
-  def forward(
+  override def forward(
     features: Tensor,      // (numNodes, numFeatures)
     adj: Tensor             // (numNodes, numNodes) adjacency matrix
   ): Tensor = {
@@ -142,7 +147,7 @@ class GraphAttentionLayer(
     attention.foreach(_.to(dev, false))
   }
 
-  def forward(input: Tensor, adj: Tensor): Tensor = {
+  override def forward(input: Tensor, adj: Tensor): Tensor = {
     val numNodes = input.size(0)
 
     // Compute attention for each head
@@ -220,7 +225,7 @@ class GraphSAGE(
     agg2.to(dev, false)
   }
 
-  def forward(
+  override def forward(
     features: Tensor,      // (numNodes, numFeatures)
     adj: Tensor             // (numNodes, numNodes) adjacency matrix
   ): Tensor = {
@@ -249,7 +254,7 @@ class SAGEAggregator(
     weight.to(dev, false)
   }
 
-  def forward(input: Tensor, adj: Tensor): Tensor = {
+  override def forward(input: Tensor, adj: Tensor): Tensor = {
     val numNodes = input.size(0)
 
     // Aggregate neighbor features
@@ -295,7 +300,7 @@ class FraudGNN(
     layers.foreach(_.to(dev, false))
   }
 
-  def forward(
+  override def forward(
     features: Tensor,      // (numNodes, numFeatures)
     adj: Tensor             // (numNodes, numNodes) adjacency matrix
   ): Tensor = {

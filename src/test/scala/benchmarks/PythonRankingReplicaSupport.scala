@@ -1,6 +1,9 @@
 package benchmarks
 
-import org.bytedeco.pytorch.{Adam, AdamOptions, Module, Tensor}
+import org.bytedeco.pytorch.{Tensor}
+import org.bytedeco.pytorch.optim.Adam
+import org.bytedeco.pytorch.optim.AdamOptions
+import org.bytedeco.pytorch.nn.Module
 import org.bytedeco.pytorch.global.torch.ScalarType
 import torchrec.Implicits.tensor
 import torchrec.Implicits.RichTensor

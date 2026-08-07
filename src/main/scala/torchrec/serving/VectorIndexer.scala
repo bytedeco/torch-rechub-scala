@@ -1,11 +1,21 @@
 package torchrec.serving
 
 import org.bytedeco.pytorch._
+import org.bytedeco.pytorch.nn.Module
+import org.bytedeco.pytorch.nn.modules._
+import org.bytedeco.pytorch.nn.modules.container._
+import org.bytedeco.pytorch.nn.options._
+import org.bytedeco.pytorch.optim._
+import org.bytedeco.pytorch.data.datasets._
+import org.bytedeco.pytorch.data.options._
+import org.bytedeco.pytorch.data.sampler._
+import org.bytedeco.pytorch.distributed._
 import org.bytedeco.pytorch.global.torch
 import org.bytedeco.pytorch.global.torch.ScalarType
 
 import torchrec.Implicits.SeqTensorRichSeq
 import torchrec.Implicits.RichTensor
+import torchrec.Implicits.tensor
 import scala.collection.mutable
 
 /** Base trait for vector indexers used in the retrieval stage. */
@@ -176,7 +186,6 @@ class FaissIVFIndexer(
     val nc = candidateSet.size()
     if (nc == 0) {
       // Fallback: empty
-      import torchrec.Implicits._
       val idxT = tensor(Array(0f), Array(1L, topK.toLong)).toType(ScalarType.Long)
       val distT = tensor(Array(Float.MaxValue), Array(1L, topK.toLong))
       return (idxT, distT)
@@ -235,7 +244,6 @@ class FaissIVFIndexer(
     distsHost.close()
     candTensor.close()
 
-    import torchrec.Implicits._
     val indicesFlatF = tensor(indicesArr.map(_.toFloat), Array((nq.toLong * topK.toLong)))
     val distsFlatF = tensor(distsArr, Array((nq.toLong * topK.toLong)))
     val indicesTensor = indicesFlatF.reshape(nq.toLong, topK.toLong).toType(ScalarType.Long)
@@ -493,7 +501,6 @@ class AnnoyIndexer(
     }
     q.close()
 
-    import torchrec.Implicits._
     val indicesFlatF = tensor(indicesArr.map(_.toFloat), Array((nq.toLong * topK.toLong)))
     val distsFlatF = tensor(distsArr, Array((nq.toLong * topK.toLong)))
     val indicesTensor = indicesFlatF.reshape(nq.toLong, topK.toLong).toType(ScalarType.Long)
@@ -637,7 +644,6 @@ class HNSWIndexer(
     }
     q.close()
 
-    import torchrec.Implicits._
     val indicesFlatF = tensor(indicesArr.map(_.toFloat), Array((nq.toLong * topK.toLong)))
     val distsFlatF = tensor(distsArr, Array((nq.toLong * topK.toLong)))
     val indicesTensor = indicesFlatF.reshape(nq.toLong, topK.toLong).toType(ScalarType.Long)

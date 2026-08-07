@@ -1,6 +1,15 @@
 package torchrec.basic.layers
 
 import org.bytedeco.pytorch._
+import org.bytedeco.pytorch.nn.Module
+import org.bytedeco.pytorch.nn.modules._
+import org.bytedeco.pytorch.nn.modules.container._
+import org.bytedeco.pytorch.nn.options._
+import org.bytedeco.pytorch.optim._
+import org.bytedeco.pytorch.data.datasets._
+import org.bytedeco.pytorch.data.options._
+import org.bytedeco.pytorch.data.sampler._
+import org.bytedeco.pytorch.distributed._
 import org.bytedeco.pytorch.global.torch
 import org.bytedeco.pytorch.global.torch.ScalarType
 
@@ -71,7 +80,7 @@ class FieldAwareFactorizationMachine(
     ffee.to(new org.bytedeco.pytorch.Device(device), ScalarType.Float)
   }
 
-  def forward(embeddings: Tensor): Tensor = {
+  override def forward(embeddings: Tensor): Tensor = {
     // embeddings: (batch, num_fields, embed_dim)
     val batchSize = embeddings.size(0).toInt
     val dev = embeddings.device()

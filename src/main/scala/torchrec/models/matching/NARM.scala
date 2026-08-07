@@ -5,6 +5,15 @@ import torchrec.basic.layers._
 import torchrec.utils.DeviceSupport
 
 import org.bytedeco.pytorch._
+import org.bytedeco.pytorch.nn.Module
+import org.bytedeco.pytorch.nn.modules._
+import org.bytedeco.pytorch.nn.modules.container._
+import org.bytedeco.pytorch.nn.options._
+import org.bytedeco.pytorch.optim._
+import org.bytedeco.pytorch.data.datasets._
+import org.bytedeco.pytorch.data.options._
+import org.bytedeco.pytorch.data.sampler._
+import org.bytedeco.pytorch.distributed._
 import org.bytedeco.pytorch.global.torch
 
 import torchrec.Implicits._
@@ -38,7 +47,7 @@ class NARM(
   output.to(new Device(device),false)
   register_module("output", output)
 
-  def forward(sequence: Tensor): Tensor = {
+  override def forward(sequence: Tensor): Tensor = {
     // Get raw sequence embeddings (batch, seqLen, embedDim)
     val raw = embedding.forwardSeqRaw(Map(seqFeatureName -> sequence))
     val emb = if (raw.dim() == 4L) raw.squeeze(1L) else raw

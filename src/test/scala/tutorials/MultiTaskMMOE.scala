@@ -1,7 +1,6 @@
 package tutorials
 
 import torchrec.Implicits._
-import torchrec.Implicits._
 import torchrec.data.DataGenerator
 import torchrec.basic.features._
 import torchrec.data._

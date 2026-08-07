@@ -1,6 +1,15 @@
 package torchrec.basic.layers
 
 import org.bytedeco.pytorch._
+import org.bytedeco.pytorch.nn.Module
+import org.bytedeco.pytorch.nn.modules._
+import org.bytedeco.pytorch.nn.modules.container._
+import org.bytedeco.pytorch.nn.options._
+import org.bytedeco.pytorch.optim._
+import org.bytedeco.pytorch.data.datasets._
+import org.bytedeco.pytorch.data.options._
+import org.bytedeco.pytorch.data.sampler._
+import org.bytedeco.pytorch.distributed._
 import org.bytedeco.pytorch.global.torch
 import org.bytedeco.pytorch.global.torch.ScalarType
 import torchrec.utils.DeviceSupport
@@ -52,7 +61,7 @@ class AUGRU_Cell(
     this.to(dev, false)
   }
 
-  def forward(x: Tensor, h_1: Tensor, a: Tensor): Tensor = {
+  override def forward(x: Tensor, h_1: Tensor, a: Tensor): Tensor = {
     // x: (batch, embed_dim), h_1: (batch, embed_dim), a: (batch, 1) attention score
     // Update gate: u = sigmoid(Wu @ x + Uu @ h_1 + bu)
     val u = torch.sigmoid(Wu.forward(x).add(Uu.forward(h_1)).add(bu))
@@ -95,7 +104,8 @@ class AUGRU(
     this.to(dev, false)
   }
 
-  def forward(x: Tensor, item: Tensor, mask: Tensor): (Tensor, Tensor) = {
+  //(Tensor, Tensor)
+  def forwardPair(x: Tensor, item: Tensor, mask: Tensor, r: Boolean =false): T_TensorTensor_T  = {
     // Compute attention scores
     val waOut = Wa.forward(x)
     val itemUnsq = item.unsqueeze(1)
@@ -130,6 +140,6 @@ class AUGRU(
     }
 
     val outputTensor = torch.cat(new TensorVector(outs.toSeq*), 1)
-    (outputTensor, h)
+    new T_TensorTensor_T(outputTensor, h)
   }
 }

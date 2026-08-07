@@ -1,6 +1,15 @@
 package torchrec.quantization
 
 import org.bytedeco.pytorch.*
+import org.bytedeco.pytorch.nn.Module
+import org.bytedeco.pytorch.nn.modules._
+import org.bytedeco.pytorch.nn.modules.container._
+import org.bytedeco.pytorch.nn.options._
+import org.bytedeco.pytorch.optim._
+import org.bytedeco.pytorch.data.datasets._
+import org.bytedeco.pytorch.data.options._
+import org.bytedeco.pytorch.data.sampler._
+import org.bytedeco.pytorch.distributed._
 import org.bytedeco.pytorch.global.torch as pt
 import org.bytedeco.pytorch.global.torch.ScalarType
 //import torchrec.serving.{FP8Conv2d, FP8Linear, FP8Model, FP8Quantizer}
@@ -143,9 +152,9 @@ class FP8Linear(
     private val scale: Tensor,
     private var bias: Tensor,
     private val quantizer: FP8Quantizer
-) extends AutoCloseable {
+) extends Module {
 
-  def forward(input: Tensor): Tensor = {
+  override def forward(input: Tensor): Tensor = {
     // Fan Lianghua Quanzhong
     val dequantizedWeight = quantizer.dequantize(weight)
 
@@ -187,9 +196,9 @@ class FP8Conv2d(
     private val stride: Array[Int],
     private val padding: Array[Int],
     private val quantizer: FP8Quantizer
-) extends AutoCloseable {
+) extends Module {
 
-  def forward(input: Tensor): Tensor = {
+  override def forward(input: Tensor): Tensor = {
     // Fan Lianghua Quanzhong
     val dequantizedWeight = quantizer.dequantize(weight)
 
@@ -222,9 +231,9 @@ class FP8Model(
     private val originalModel: Module,
     private val quantizer: FP8Quantizer,
     private val quantizedLayers: Map[String, FP8Linear]
-) extends AutoCloseable {
+) extends Module {
 
-  def forward(input: Tensor): Tensor = {
+  override def forward(input: Tensor): Tensor = {
     // Passthrough for now (full model not accessible via JavaCPP)
     input
   }

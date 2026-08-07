@@ -1,6 +1,15 @@
 package torchrec.models.knowledge_tracing.layers
 
 import org.bytedeco.pytorch.*
+import org.bytedeco.pytorch.nn.Module
+import org.bytedeco.pytorch.nn.modules._
+import org.bytedeco.pytorch.nn.modules.container._
+import org.bytedeco.pytorch.nn.options._
+import org.bytedeco.pytorch.optim._
+import org.bytedeco.pytorch.data.datasets._
+import org.bytedeco.pytorch.data.options._
+import org.bytedeco.pytorch.data.sampler._
+import org.bytedeco.pytorch.distributed._
 import org.bytedeco.pytorch.global.torch
 import org.bytedeco.pytorch.global.torch.ScalarType
 import torchrec.Implicits.*
@@ -159,7 +168,7 @@ class MultiHeadAttention(
     vLinear.to(dev, false); outLinear.to(dev, false)
   }
 
-  def forward(q: Tensor, k: Tensor, v: Tensor, mask: Tensor = torch.empty()): Tensor = {
+  override def forward(q: Tensor, k: Tensor, v: Tensor, mask: Tensor = torch.empty()): Tensor = {
     val batchSize = q.size(0).toInt
     val seqLen = q.size(1).toInt
 
@@ -206,7 +215,7 @@ class SAINTEncoderBlock(
   register_module("ln1", ln1)
   register_module("ln2", ln2)
 
-  def forward(inEx: Tensor, inCat: Tensor, inPos: Tensor): Tensor = {
+  override def forward(inEx: Tensor, inCat: Tensor, inPos: Tensor): Tensor = {
     // Combine exercise, category, and position embeddings
     val combined = inEx.add(inCat).add(inPos)
     val attended = multiEn.forward(combined, combined, combined)
@@ -249,7 +258,7 @@ class SAINTDecoderBlock(
   register_module("ln2", ln2)
   register_module("ln3", ln3)
 
-  def forward(inRes: Tensor, inPos: Tensor, enOut: Tensor): Tensor = {
+  override def forward(inRes: Tensor, inPos: Tensor, enOut: Tensor): Tensor = {
     val combined = inRes.add(inPos)
 
     // Cross attention on encoder output

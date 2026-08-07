@@ -1,6 +1,15 @@
 package torchrec.models.knowledge_tracing.datasets
 
 import org.bytedeco.pytorch.*
+import org.bytedeco.pytorch.nn.Module
+import org.bytedeco.pytorch.nn.modules._
+import org.bytedeco.pytorch.nn.modules.container._
+import org.bytedeco.pytorch.nn.options._
+import org.bytedeco.pytorch.optim._
+import org.bytedeco.pytorch.data.datasets._
+import org.bytedeco.pytorch.data.options._
+import org.bytedeco.pytorch.data.sampler._
+import org.bytedeco.pytorch.distributed._
 import org.bytedeco.pytorch.global.torch
 import org.bytedeco.pytorch.global.torch.ScalarType
 import torchrec.Implicits.*
@@ -56,33 +65,6 @@ class KTDataset(
     )
   }
 
-  /** Create a JavaDataset adapter for use with JavaCPP DataLoader. */
-  def asJavaDataset(): JavaDataset = {
-    new KTDatasetAdapter(this)
-  }
-}
-
-/**
- * Java adapter so KTDataset works with JavaCPP DataLoader.
- */
-class KTDatasetAdapter(private val dataset: KTDataset) extends JavaDataset {
-
-  override def size(): SizeTOptional = new SizeTOptional(dataset.size)
-
-  override def get(index: Long): Example = {
-    val batch = dataset.get(index)
-    val example = new Example()
-    val keys = batch.sparseFeatures.keys.toArray
-    val dataArr = keys.flatMap { k =>
-      val t = batch.sparseFeatures(k)
-      val arr = try t.toFloatArray catch { case _ => Array(0.0f) }
-      arr
-    }
-    if (dataArr.nonEmpty) {
-      val data = torchrec.Implicits.tensor(dataArr, Array(dataArr.length.toLong))
-        .toType(ScalarType.Long)
-      example.data(data)
-    }
-    example
-  }
+  /** Create a JavaTensorDataset adapter for use with JavaCPP DataLoader. */
+  def asJavaTensorDataset(): JavaTensorDataset = Dataset.toJavaTensorDataset(this)
 }

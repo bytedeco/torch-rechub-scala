@@ -1,6 +1,15 @@
 package torchrec.models.knowledge_tracing
 
 import org.bytedeco.pytorch.*
+import org.bytedeco.pytorch.nn.Module
+import org.bytedeco.pytorch.nn.modules._
+import org.bytedeco.pytorch.nn.modules.container._
+import org.bytedeco.pytorch.nn.options._
+import org.bytedeco.pytorch.optim._
+import org.bytedeco.pytorch.data.datasets._
+import org.bytedeco.pytorch.data.options._
+import org.bytedeco.pytorch.data.sampler._
+import org.bytedeco.pytorch.distributed._
 import org.bytedeco.pytorch.global.torch
 import org.bytedeco.pytorch.global.torch.ScalarType
 import torchrec.Implicits.*
@@ -115,7 +124,7 @@ class RKT(
    * @param responses   Responses 0/1 (batch, seqLen)
    * @return Predictions (batch, seqLen) - probability of correct response
    */
-  def forward(
+  override def forward(
     conceptIds: Tensor,
     responses: Tensor
   ): Tensor = {
@@ -163,7 +172,7 @@ class RKT(
     val attnOut = selfAttn.forward(withPos, withPos, withPos, relations, l1Weight, l2Weight)
 
     // LSTM forward
-    val lstmOut = lstm.forward(attnOut).get0()  // (batch, seq, embedDim)
+    val lstmOut = lstm.forwardT_TensorTensor_T(attnOut).get0()  // (batch, seq, embedDim)
 
     // Apply dropout
     val dropped = dropoutLayer.forward(lstmOut)
@@ -229,7 +238,7 @@ class RelationAttentionLayer(
     vLinear.to(dev, false); outLinear.to(dev, false)
   }
 
-  def forward(
+  override def forward(
     q: Tensor, k: Tensor, v: Tensor,
     relations: Tensor,
     l1: Tensor, l2: Tensor

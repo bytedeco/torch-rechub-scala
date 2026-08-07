@@ -6,6 +6,15 @@ import torchrec.Implicits._
 import torchrec.utils.DeviceSupport
 
 import org.bytedeco.pytorch._
+import org.bytedeco.pytorch.nn.Module
+import org.bytedeco.pytorch.nn.modules._
+import org.bytedeco.pytorch.nn.modules.container._
+import org.bytedeco.pytorch.nn.options._
+import org.bytedeco.pytorch.optim._
+import org.bytedeco.pytorch.data.datasets._
+import org.bytedeco.pytorch.data.options._
+import org.bytedeco.pytorch.data.sampler._
+import org.bytedeco.pytorch.distributed._
 import org.bytedeco.pytorch.global.torch
 import org.bytedeco.pytorch.global.torch.ScalarType
 
@@ -61,7 +70,7 @@ class xDeepFM(
 
   // Linear (1st-order) features
   private val linearWeight = {
-    val w = new org.bytedeco.pytorch.LinearImpl(sparseDim, 1)
+    val w = new org.bytedeco.pytorch.nn.modules.LinearImpl(sparseDim, 1)
     register_module("linear", w)
     w.to(new org.bytedeco.pytorch.Device(device), false)
     w

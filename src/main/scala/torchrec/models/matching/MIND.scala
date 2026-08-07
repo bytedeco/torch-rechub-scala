@@ -5,6 +5,15 @@ import torchrec.basic.layers.*
 import torchrec.Implicits.*
 import torchrec.utils.DeviceSupport
 import org.bytedeco.pytorch.*
+import org.bytedeco.pytorch.nn.Module
+import org.bytedeco.pytorch.nn.modules._
+import org.bytedeco.pytorch.nn.modules.container._
+import org.bytedeco.pytorch.nn.options._
+import org.bytedeco.pytorch.optim._
+import org.bytedeco.pytorch.data.datasets._
+import org.bytedeco.pytorch.data.options._
+import org.bytedeco.pytorch.data.sampler._
+import org.bytedeco.pytorch.distributed._
 import org.bytedeco.pytorch.global.torch
 import org.bytedeco.pytorch.global.torch.ScalarType
 
@@ -142,7 +151,7 @@ class CapsuleNetwork(
   W.to(new Device(device),false)
   register_module("W", W)
 
-  def forward(x: Tensor): Tensor = {
+  override def forward(x: Tensor): Tensor = {
     // x: (batch, seq_len, embed_dim)
     // Ensure input is on the same device as the capsule projection weights
     val dev = new Device(device)

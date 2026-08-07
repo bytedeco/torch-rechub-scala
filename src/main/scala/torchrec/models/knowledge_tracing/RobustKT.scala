@@ -2,6 +2,15 @@ package torchrec.models.knowledge_tracing
 
 import org.bytedeco.javacpp.LongPointer
 import org.bytedeco.pytorch.*
+import org.bytedeco.pytorch.nn.Module
+import org.bytedeco.pytorch.nn.modules._
+import org.bytedeco.pytorch.nn.modules.container._
+import org.bytedeco.pytorch.nn.options._
+import org.bytedeco.pytorch.optim._
+import org.bytedeco.pytorch.data.datasets._
+import org.bytedeco.pytorch.data.options._
+import org.bytedeco.pytorch.data.sampler._
+import org.bytedeco.pytorch.distributed._
 import org.bytedeco.pytorch.global.torch
 import org.bytedeco.pytorch.global.torch.ScalarType
 import torchrec.Implicits.*
@@ -102,7 +111,7 @@ class RobustKT(
    * @param responses  Responses 0/1 (batch, seqLen)
    * @return Predictions (batch, seqLen) - probability of correct response
    */
-  def forward(
+  override def forward(
     conceptIds: Tensor,
     responses: Tensor
   ): Tensor = {
@@ -215,7 +224,7 @@ class SmoothModule(
 
   // causalConv skipped for smoke tests; no device move required
 
-  def forward(x: Tensor): Tensor = {
+  override def forward(x: Tensor): Tensor = {
     // x: (batch, seq, embedDim)
     val batchSize = x.size(0).toInt
     val seqLen = x.size(1).toInt
@@ -259,7 +268,7 @@ class CausalConv1d(
   private val conv = new Conv1dImpl(opt)
   register_module("conv", conv)
 
-  def forward(x: Tensor): Tensor = {
+  override def forward(x: Tensor): Tensor = {
     val out = conv.forward(x)
     // Crop output to remove padding
     if (padding > 0) {

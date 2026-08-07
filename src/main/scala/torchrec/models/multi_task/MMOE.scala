@@ -1,159 +1,149 @@
 package torchrec.models.multi_task
 
 import org.bytedeco.pytorch._
+import org.bytedeco.pytorch.nn.Module
+import org.bytedeco.pytorch.nn.modules._
+import org.bytedeco.pytorch.nn.modules.container._
+import org.bytedeco.pytorch.nn.options._
+import org.bytedeco.pytorch.optim._
+import org.bytedeco.pytorch.data.datasets._
+import org.bytedeco.pytorch.data.options._
+import org.bytedeco.pytorch.data.sampler._
+import org.bytedeco.pytorch.distributed._
 import org.bytedeco.pytorch.global.torch
-import org.bytedeco.pytorch.global.torch.ScalarType
+
 import torchrec.basic.features._
 import torchrec.basic.layers.{EmbeddingLayer, MLP, PredictionLayer}
 import torchrec.utils.DeviceSupport
 
+import scala.collection.mutable
+
 /**
- * MMOE - Multi-gate Mixture-of-Experts Model
+ * MMOE — Multi-gate Mixture-of-Experts (KDD'2018).
  *
- * Full implementation matching the Python torch_rechub MMOE model.
- * Uses multiple gates for expert selection per task.
+ * Mirrors the Python reference: `nn.ModuleList`s of experts / gates / towers /
+ * prediction layers, with a per-task softmax gate mixing the shared experts.
  *
  * Reference:
  *   "Modeling Task Relationships in Multi-task Learning with Multi-gate Mixture-of-Experts"
- *   KDD'2018 - https://dl.acm.org/doi/pdf/10.1145/3219819.3220007
+ *   https://dl.acm.org/doi/pdf/10.1145/3219819.3220007
  *
- * Architecture:
- *   - Experts: Shared expert networks (MLPs) - stored in Map for type-safe access
- *   - Gates: Task-specific gating networks - stored in Map for type-safe access
- *   - Towers: Task-specific output predictors - stored in Map for type-safe access
- *   - Prediction layers for final output - stored in Map for type-safe access
- *
- * @param features List of features
- * @param taskTypes List of task types: "classification" or "regression"
- * @param nExpert Number of expert networks
- * @param expertParams Expert MLP parameters: dims, activation, dropout
- * @param towerParamsList List of tower params dict (one per task)
- * @param device Device for computation
+ * @param features        List of feature columns.
+ * @param taskTypes       Per-task type: `"classification"` or `"regression"`.
+ * @param nExpert         Number of shared experts.
+ * @param expertParams    Expert MLP params: `dims`, `activation`, `dropout`.
+ * @param towerParamsList Per-task tower params (same keys as expertParams).
+ * @param device          Device for parameters.
  */
 class MMOE(
-            features: List[Feature],
-            taskTypes: List[String],
-            nExpert: Int = 4,
-            expertParams: Map[String, Any] = Map(),
-            towerParamsList: List[Map[String, Any]] = List(),
-            device: String = DeviceSupport.backend
-          ) extends Module {
+  features: List[Feature],
+  taskTypes: List[String],
+  nExpert: Int = 4,
+  expertParams: Map[String, Any] = Map(),
+  towerParamsList: List[Map[String, Any]] = List(),
+  device: String = DeviceSupport.backend
+) extends Module {
 
-  require(features.nonEmpty, "features cannot be empty")
-  require(taskTypes.nonEmpty, "taskTypes cannot be empty")
-  require(nExpert > 0, "nExpert must be positive")
+  require(features.nonEmpty, "MMOE: features cannot be empty")
+  require(taskTypes.nonEmpty, "MMOE: taskTypes cannot be empty")
+  require(nExpert > 0, s"MMOE: nExpert must be > 0, got $nExpert")
+  require(taskTypes.forall(t => t == "classification" || t == "regression"),
+    "MMOE: taskTypes must be 'classification' or 'regression'")
 
-  private val targetDevice = new Device(device)
-  private val nTask = taskTypes.size
-
-  // Feature dimensions
+  private val nTask: Int = taskTypes.size
   private val inputDims: Int = features.map(_.embedDim).sum
+  private val expertDims: List[Long] =
+    expertParams.getOrElse("dims", List(128L)).asInstanceOf[List[Long]]
+  private val expertActivation: String =
+    expertParams.getOrElse("activation", "relu").asInstanceOf[String]
+  private val expertDropout: Float =
+    expertParams.getOrElse("dropout", 0.0f).asInstanceOf[Float]
+  private val expertLast: Long = expertDims.last
 
-  // Embedding layer
   private val embedding = new EmbeddingLayer(features, features.head.embedDim, device)
   register_module("embedding", embedding)
 
-  // Expert params
-  private val expertDims = expertParams.getOrElse("dims", List(128L)).asInstanceOf[List[Long]]
-  private val expertActivation = expertParams.getOrElse("activation", "relu").asInstanceOf[String]
-  private val expertDropout = expertParams.getOrElse("dropout", 0.0f).asInstanceOf[Float]
+  // Experts — mirrors `nn.ModuleList(MLP(...) for i in range(n_expert))`.
+  private val experts: ModuleListImpl = new ModuleListImpl()
+  for (i <- 0 until nExpert) {
+    val m = new MLP(inputDims, expertDims, expertLast, expertActivation, expertDropout,
+      outputLayer = false, device = device)
+    register_module(s"expert_$i", m)
+    experts.push_back(m)
+  }
 
-  // ====== Store typed references in Map for type-safe Scala access ======
-  // Modules are registered via register_module() which adds them to the ModuleListImpl internally
+  // Gates — one per task; each outputs a softmax over the experts.
+  private val gates: ModuleListImpl = new ModuleListImpl()
+  for (i <- 0 until nTask) {
+    val m = new MLP(inputDims, List(nExpert.toLong), nExpert.toLong, "softmax", 0.0f,
+      outputLayer = false, device = device)
+    register_module(s"gate_$i", m)
+    gates.push_back(m)
+  }
 
-  // Experts - Map for type-safe access
-  private val expertsMap: Map[String, MLP] = (0 until nExpert).map { i =>
-    val name = s"expert_$i"
-    val expert = new MLP(inputDims, expertDims, expertDims.last, expertActivation, expertDropout, outputLayer = false, device = device)
-    expert.to(targetDevice, false)
-    register_module(name, expert)
-    (name, expert)
-  }.toMap
-
-  // Gates - Map for type-safe access (one per task)
-  private val gatesMap: Map[String, MLP] = (0 until nTask).map { i =>
-    val name = s"gate_$i"
-    // Gate outputs softmax over n_expert
-    val gate = new MLP(inputDims, List(nExpert), nExpert, "softmax", 0.0f, outputLayer = false, device = device)
-    gate.to(targetDevice, false)
-    register_module(name, gate)
-    (name, gate)
-  }.toMap
-
-  // Towers - Map for type-safe access
-  private val towersMap: Map[String, MLP] = (0 until nTask).map { i =>
-    val name = s"tower_$i"
+  // Towers — one per task.
+  private val towers: ModuleListImpl = new ModuleListImpl()
+  for (i <- 0 until nTask) {
     val params = if (towerParamsList.isEmpty) Map[String, Any]() else towerParamsList(i)
-    val dims = params.getOrElse("dims", List(expertDims.last)).asInstanceOf[List[Long]]
+    val dims = params.getOrElse("dims", List(expertLast)).asInstanceOf[List[Long]]
     val activation = params.getOrElse("activation", "relu").asInstanceOf[String]
     val dropout = params.getOrElse("dropout", 0.0f).asInstanceOf[Float]
-    val tower = new MLP(expertDims.last.toInt, dims, 1, activation, dropout, outputLayer = true, device = device)
-    register_module(name, tower)
-    (name, tower)
-  }.toMap
+    val m = new MLP(expertLast, dims, 1L, activation, dropout, outputLayer = true, device = device)
+    register_module(s"tower_$i", m)
+    towers.push_back(m)
+  }
 
-  // Prediction layers - Map for type-safe access
-  private val predictLayersMap: Map[String, PredictionLayer] = (0 until nTask).map { i =>
-    val name = s"predictLayer_$i"
-    val predictLayer = new PredictionLayer(taskTypes(i))
-    register_module(name, predictLayer)
-    (name, predictLayer)
-  }.toMap
+  // Prediction layers — one per task.
+  private val predictLayers: ModuleListImpl = new ModuleListImpl()
+  for (i <- 0 until nTask) {
+    val m = new PredictionLayer(taskTypes(i))
+    register_module(s"predictLayer_$i", m)
+    predictLayers.push_back(m)
+  }
 
   def forward(x: Map[String, Tensor]): Tensor = {
-    // Embedding: [batch_size, input_dims]
-    val embedX = embedding.forward(sparseFeats = x, sequenceFeats = Map(), squeeze = true)
-
-    // Expert outputs: List of [batch_size, expert_dim]
-    val expertOuts: Seq[Tensor] = expertsMap.values.toList.map(_.forward(embedX))
-
-    // Concatenate experts along dim=1 then reshape to [batch_size, n_expert, expert_dim]
+    val embedX = embedding.forward(sparseFeats = x, sequenceFeats = Map.empty, squeeze = true)
     val batchSize = embedX.size(0)
-    val expertDim = expertDims.last
-    // torch.cat along dim=1 gives [batch_size, n_expert * expert_dim]
-    val expertOutsCatFlat = torch.cat(new TensorVector(expertOuts: _*), 1)
-    // Reshape to [batch_size, n_expert, expert_dim]
-    val expertOutsCat = expertOutsCatFlat.view(batchSize, nExpert.toLong, expertDim)
 
-    // Gate outputs and weighted combination for each task
-    val outputs = (0 until nTask).map { i =>
-      val gate = gatesMap(s"gate_$i")
-      val tower = towersMap(s"tower_$i")
-      val predictLayer = predictLayersMap(s"predictLayer_$i")
+    // expert_outs[i]: (batch, 1, expertLast)  → cat along dim=1 → (batch, n_expert, expertLast).
+    val expertOuts = mutable.ArrayBuffer[Tensor]()
+    var ei = 0
+    while (ei < nExpert) {
+      expertOuts += experts.get(ei).forward(embedX).unsqueeze(1)
+      ei += 1
+    }
+    val expertCat = torch.cat(new TensorVector(expertOuts.toSeq: _*), 1L)
 
-      // Gate: [batch_size, n_expert]
-      val gateOut = gate.forward(embedX).unsqueeze(-1) // [batch_size, n_expert, 1]
-
-      // Weighted experts: [batch_size, n_expert, expert_dim]
-      val expertWeight = torch.mul(gateOut, expertOutsCat)
-
-      // Pool: [batch_size, expert_dim]
-      val expertPooling = expertWeight.sum(1)
-
-      // Tower: [batch_size, 1]
-      val towerOut = tower.forward(expertPooling)
-
-      // Prediction: sigmoid for classification
-      predictLayer.forward(towerOut)
+    // For each task: gate → weighted expert pool → tower → prediction.
+    val ys = mutable.ArrayBuffer[Tensor]()
+    var ti = 0
+    while (ti < nTask) {
+      // gate_out: (batch, n_expert, 1)
+      val gateOut = gates.get(ti).forward(embedX).unsqueeze(-1)
+      // weighted experts: (batch, n_expert, expertLast)
+      val expertWeight = torch.mul(gateOut, expertCat)
+      // pooled: (batch, expertLast)
+      val pooled = expertWeight.sum(1L)
+      // tower: (batch, 1) → prediction: (batch, 1) or (batch, 1) post-sigmoid.
+      val towerOut = towers.get(ti).forward(pooled)
+      ys += predictLayers.get(ti).forward(towerOut)
+      ti += 1
     }
 
-    // Concatenate: torch.cat(ys, dim=1)
-    torch.cat(new TensorVector(outputs: _*), 1)
+    torch.cat(new TensorVector(ys.toSeq: _*), 1L)
   }
 }
 
 /**
- * MMOE companion object with factory methods.
+ * MMOE factory — identical to the constructor.
  */
 object MMOE {
   def apply(
-             features: List[Feature],
-             taskTypes: List[String] = List("classification"),
-             nExpert: Int = 4,
-             expertParams: Map[String, Any] = Map("dims" -> List(128L), "activation" -> "relu", "dropout" -> 0.0f),
-             towerParamsList: List[Map[String, Any]] = List(),
-             device: String = DeviceSupport.backend
-           ): MMOE = {
-    new MMOE(features, taskTypes, nExpert, expertParams, towerParamsList, device)
-  }
+    features: List[Feature],
+    taskTypes: List[String] = List("classification"),
+    nExpert: Int = 4,
+    expertParams: Map[String, Any] = Map("dims" -> List(128L), "activation" -> "relu", "dropout" -> 0.0f),
+    towerParamsList: List[Map[String, Any]] = List(),
+    device: String = DeviceSupport.backend
+  ): MMOE = new MMOE(features, taskTypes, nExpert, expertParams, towerParamsList, device)
 }

@@ -1,6 +1,15 @@
 package torchrec.models.knowledge_tracing
 
 import org.bytedeco.pytorch.*
+import org.bytedeco.pytorch.nn.Module
+import org.bytedeco.pytorch.nn.modules._
+import org.bytedeco.pytorch.nn.modules.container._
+import org.bytedeco.pytorch.nn.options._
+import org.bytedeco.pytorch.optim._
+import org.bytedeco.pytorch.data.datasets._
+import org.bytedeco.pytorch.data.options._
+import org.bytedeco.pytorch.data.sampler._
+import org.bytedeco.pytorch.distributed._
 import org.bytedeco.pytorch.global.torch
 import org.bytedeco.pytorch.global.torch.ScalarType
 import torchrec.Implicits.*
@@ -129,7 +138,7 @@ class DIMKT(
    * @param responses    Responses 0/1 (batch, seqLen)
    * @return Predictions (batch, seqLen) - probability of correct response
    */
-  def forward(
+  override def forward(
     conceptIds1: Tensor,
     conceptIds2: Tensor,
     conceptIds3: Tensor,
@@ -190,7 +199,7 @@ class DIMKT(
     val enriched = combined.add(fused3)
 
     // Inductive moment module: LSTM processes temporal dynamics
-    val lstmOut = momentLSTM.forward(enriched).get0()  // (batch, seqLen, hiddenDim)
+    val lstmOut = momentLSTM.forwardT_TensorTensor_T(enriched).get0()  // (batch, seqLen, hiddenDim)
 
     // Output projection with residual connection
     val projected = outputProj.forward(dropoutLayer.forward(lstmOut))

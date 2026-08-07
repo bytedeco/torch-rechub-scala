@@ -1,6 +1,7 @@
 package torchrec.distributed
 
-import org.bytedeco.pytorch.{Module, Tensor}
+import org.bytedeco.pytorch.{Tensor}
+import org.bytedeco.pytorch.nn.Module
 
 import java.lang.reflect.Method
 

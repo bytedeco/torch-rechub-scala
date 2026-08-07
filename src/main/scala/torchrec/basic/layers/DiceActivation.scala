@@ -1,6 +1,9 @@
 package torchrec.basic.layers
 
-import org.bytedeco.pytorch.{BatchNorm1dImpl, BatchNormOptions, Module, Scalar, ScalarTypeOptional, Tensor, TensorOptions}
+import org.bytedeco.pytorch.{Scalar, ScalarTypeOptional, Tensor, TensorOptions}
+import org.bytedeco.pytorch.nn.modules.BatchNorm1dImpl
+import org.bytedeco.pytorch.nn.options.BatchNormOptions
+import org.bytedeco.pytorch.nn.Module
 import org.bytedeco.pytorch.global.torch
 import org.bytedeco.pytorch.global.torch.ScalarType
 
@@ -28,7 +31,7 @@ class DiceActivation(
   register_parameter("alpha", alpha)
   register_parameter("beta", beta)
 
-  def forward(x: Tensor): Tensor = {
+  override def forward(x: Tensor): Tensor = {
     val dim = x.dim()
     val batchSize = x.size(0)
 

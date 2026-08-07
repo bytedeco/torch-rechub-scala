@@ -2,8 +2,17 @@ package torchrec.distributed
 
 import org.bytedeco.javacpp.chrono.Milliseconds
 import org.bytedeco.pytorch.*
+import org.bytedeco.pytorch.nn.Module
+import org.bytedeco.pytorch.nn.modules._
+import org.bytedeco.pytorch.nn.modules.container._
+import org.bytedeco.pytorch.nn.options._
+import org.bytedeco.pytorch.optim._
+import org.bytedeco.pytorch.data.datasets._
+import org.bytedeco.pytorch.data.options._
+import org.bytedeco.pytorch.data.sampler._
+import org.bytedeco.pytorch.distributed._
 import org.bytedeco.pytorch.global.torch as pt
-import org.bytedeco.pytorch.nccl.ProcessGroupNCCL
+import org.bytedeco.pytorch.distributed.ProcessGroupNCCL
 
 import java.util
 import java.util.concurrent.ConcurrentHashMap
@@ -38,7 +47,7 @@ class ProcessGroupWrapper(
     st: DistributedStore,
     to: Milliseconds,
     dev: Device
-  ): (org.bytedeco.pytorch.Backend, String) = bType match {
+  ): (org.bytedeco.pytorch.distributed.Backend, String) = bType match {
     case BackendType.NCCL if pt.cuda_is_available() =>
       val pgOpts = ProcessGroupNCCL.Options.create(true)
       pgOpts.timeout(to)
@@ -120,7 +129,7 @@ class ProcessGroupWrapper(
     broadcast(parameters, rootRank)
   }
 
-  def getNativeGroup: org.bytedeco.pytorch.Backend = processGroup
+  def getNativeGroup: org.bytedeco.pytorch.distributed.Backend = processGroup
   def getRank: Int = rank
   def getWorldSize: Int = worldSize
   def getBackend: BackendType = backendType

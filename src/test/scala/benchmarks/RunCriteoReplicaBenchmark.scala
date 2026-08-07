@@ -30,7 +30,7 @@ object RunCriteoReplicaBenchmark {
       case "dcn" => new DCN(data.features, embedDim = 16, numCrossLayers = 3, mlpDims = List(256L, 128L), dropout = 0.2f, device = device)
       case "dcn_v2" | "dcnv2" => new DCNv2(data.features, embedDim = 16, numCrossLayers = 3, mlpDims = List(256L, 128L), dropout = 0.2f, device = device)
       case "fibinet" => new FiBiNet(data.features, embedDim = 16, mlpDims = List(256L, 128L), reduction = 3, dropout = 0.2f, device = device)
-      case "autoint" => new AutoInt(data.features, embedDim = 16, numAttnHeads = 2, numLayers = 3, mlpDims = List(256L, 128L), dropout = 0.2f, device = device)
+      case "autoint" => new AutoInt(data.features,  numAttnHeads = 2, numLayers = 3, mlpDims = List(256L, 128L), dropout = 0.2f, device = device)
       case unsupported =>
         println(s"[WARN] model=$unsupported is not fully supported in Scala replica; fallback to deepfm")
         val half = data.features.size / 2

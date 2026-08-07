@@ -5,6 +5,15 @@ import torchrec.basic.layers._
 import torchrec.utils.DeviceSupport
 
 import org.bytedeco.pytorch._
+import org.bytedeco.pytorch.nn.Module
+import org.bytedeco.pytorch.nn.modules._
+import org.bytedeco.pytorch.nn.modules.container._
+import org.bytedeco.pytorch.nn.options._
+import org.bytedeco.pytorch.optim._
+import org.bytedeco.pytorch.data.datasets._
+import org.bytedeco.pytorch.data.options._
+import org.bytedeco.pytorch.data.sampler._
+import org.bytedeco.pytorch.distributed._
 import org.bytedeco.pytorch.global.torch
 
 /**
@@ -29,7 +38,7 @@ class DCNv2(
 
   // Cross network
   private val crossNet = if (useCrossNetMix) {
-    new CrossNetMix(sparseDim, numCrossLayers, lowRank, device)
+    new CrossNetMix(inputDim = sparseDim, numLayers = numCrossLayers, lowRank = lowRank, device = device)
   } else {
     new CrossNetV2(sparseDim, numCrossLayers, device)
   }

@@ -1,6 +1,9 @@
 package benchmarks.kt
 
-import org.bytedeco.pytorch.{Adam, AdamOptions, Device, Module, Scalar, Tensor, TensorOptions, TensorVector}
+import org.bytedeco.pytorch.{Device, Scalar, Tensor, TensorOptions, TensorVector}
+import org.bytedeco.pytorch.optim.Adam
+import org.bytedeco.pytorch.optim.AdamOptions
+import org.bytedeco.pytorch.nn.Module
 import org.bytedeco.pytorch.global.torch
 import org.bytedeco.pytorch.global.torch.ScalarType
 import torchrec.Implicits.{RichTensor, tensor, longTensor}

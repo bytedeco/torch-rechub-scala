@@ -1,6 +1,15 @@
 package torchrec.models.knowledge_tracing
 
 import org.bytedeco.pytorch.*
+import org.bytedeco.pytorch.nn.Module
+import org.bytedeco.pytorch.nn.modules._
+import org.bytedeco.pytorch.nn.modules.container._
+import org.bytedeco.pytorch.nn.options._
+import org.bytedeco.pytorch.optim._
+import org.bytedeco.pytorch.data.datasets._
+import org.bytedeco.pytorch.data.options._
+import org.bytedeco.pytorch.data.sampler._
+import org.bytedeco.pytorch.distributed._
 import org.bytedeco.pytorch.global.torch
 import org.bytedeco.pytorch.global.torch.ScalarType
 import torchrec.Implicits.*
@@ -52,7 +61,7 @@ class StableKT(
     outMLP.to(dev, false)
   }
 
-  def forward(
+  override def forward(
     conceptIds: Tensor,
     responses: Tensor
   ): Tensor = {
@@ -86,9 +95,9 @@ class StableKT(
     var y = qaWithPos
     var x = qWithPos
     blocks.foreach { block =>
-      val result = block.forward(x, y)
-      x = result._1
-      y = result._2
+      val result = block.forwardPair(x, y)
+      x = result.get0() //_1
+      y = result.get1() //_2
     }
 
     // Concatenate for output
@@ -155,7 +164,8 @@ class StableTransformerBlock(
     outLinear.to(dev, false); ff1.to(dev, false); ff2.to(dev, false)
   }
 
-  def forward(x: Tensor, y: Tensor): (Tensor, Tensor) = {
+  //(Tensor, Tensor)
+  def forwardPair(x: Tensor, y: Tensor, useReg: Boolean = false): T_TensorTensor_T = {
     val batchSize = x.size(0).toInt
     val seqLen = x.size(1).toInt
 
@@ -203,7 +213,7 @@ class StableTransformerBlock(
       val ffResult = ff2.forward(ffDropped)
 
       val finalOut = ln2.forward(normed1.add(ffResult))
-      (finalOut, y)
+      new T_TensorTensor_T(finalOut, y)
     } else {
       val attnWeights = biasedScores.softmax(-1)
       val attended = torch.matmul(dropoutLayer.forward(attnWeights), v)
@@ -219,7 +229,7 @@ class StableTransformerBlock(
       val ffResult = ff2.forward(ffDropped)
 
       val finalOut = ln2.forward(normed1.add(ffResult))
-      (finalOut, y)
+      new T_TensorTensor_T(finalOut, y)
     }
   }
 

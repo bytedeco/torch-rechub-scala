@@ -1,6 +1,15 @@
 package torchrec.basic.layers
 
 import org.bytedeco.pytorch._
+import org.bytedeco.pytorch.nn.Module
+import org.bytedeco.pytorch.nn.modules._
+import org.bytedeco.pytorch.nn.modules.container._
+import org.bytedeco.pytorch.nn.options._
+import org.bytedeco.pytorch.optim._
+import org.bytedeco.pytorch.data.datasets._
+import org.bytedeco.pytorch.data.options._
+import org.bytedeco.pytorch.data.sampler._
+import org.bytedeco.pytorch.distributed._
 import org.bytedeco.pytorch.global.torch
 
 import torchrec.utils.DeviceSupport
@@ -28,15 +37,15 @@ class CINFixed(
   require(numFields > 0, "numFields must be positive")
 
   // Build layers eagerly in constructor so they are registered properly
-  private val convLayers = collection.mutable.ListBuffer[org.bytedeco.pytorch.LinearImpl]()
+  private val convLayers = collection.mutable.ListBuffer[org.bytedeco.pytorch.nn.modules.LinearImpl]()
   // Projection layers: maps split-half output dim to (num_fields * embed_dim) for next iteration
-  private val projLayers = collection.mutable.ListBuffer[org.bytedeco.pytorch.LinearImpl]()
+  private val projLayers = collection.mutable.ListBuffer[org.bytedeco.pytorch.nn.modules.LinearImpl]()
 
   for (i <- crossLayerSizes.indices) {
     val outDim = crossLayerSizes(i)
     // xh is (batch, F, F), flatten to F*F for conv
     val inChannels = numFields * numFields
-    val conv = new org.bytedeco.pytorch.LinearImpl(inChannels, outDim)
+    val conv = new org.bytedeco.pytorch.nn.modules.LinearImpl(inChannels, outDim)
     register_module(s"conv_$i", conv)
     conv.to(new org.bytedeco.pytorch.Device(device), false)
     convLayers += conv
@@ -45,14 +54,14 @@ class CINFixed(
     // This is needed when splitHalf=true and this isn't the last layer
     if (splitHalf && i < crossLayerSizes.length - 1) {
       val projInDim = math.floor(outDim / 2.0).toInt max 1
-      val proj = new org.bytedeco.pytorch.LinearImpl(projInDim, numFields * embedDim)
+      val proj = new org.bytedeco.pytorch.nn.modules.LinearImpl(projInDim, numFields * embedDim)
       register_module(s"proj_$i", proj)
       proj.to(new org.bytedeco.pytorch.Device(device), false)
       projLayers += proj
     }
   }
 
-  def forward(embeddings: Tensor): Tensor = {
+ override def forward(embeddings: Tensor): Tensor = {
     // embeddings: (batch, num_fields, embed_dim)
     val batchSize = embeddings.size(0)
 

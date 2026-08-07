@@ -1,6 +1,15 @@
 package torchrec.basic.layers
 
 import org.bytedeco.pytorch._
+import org.bytedeco.pytorch.nn.Module
+import org.bytedeco.pytorch.nn.modules._
+import org.bytedeco.pytorch.nn.modules.container._
+import org.bytedeco.pytorch.nn.options._
+import org.bytedeco.pytorch.optim._
+import org.bytedeco.pytorch.data.datasets._
+import org.bytedeco.pytorch.data.options._
+import org.bytedeco.pytorch.data.sampler._
+import org.bytedeco.pytorch.distributed._
 import org.bytedeco.pytorch.global.torch
 import org.bytedeco.pytorch.global.torch.ScalarType
 
@@ -154,7 +163,7 @@ class NCELoss(
                ignoreIndex: Long = 0L,
                reduction: String = "mean"
              ) extends Module {
-  def forward(logits: Tensor, targets: Tensor): Tensor = {
+  override def forward(logits: Tensor, targets: Tensor): Tensor = {
     val scaledLogits = logits.div(new Scalar(temperature))
     val logProbs = torch.log_softmax(scaledLogits, -1)
     val batchSize = targets.size(0).toInt
@@ -197,7 +206,7 @@ class InBatchNCELoss(
                       ignoreIndex: Long = 0L,
                       reduction: String = "mean"
                     ) extends Module {
-  def forward(embeddings: Tensor, itemEmbeddings: Tensor, targets: Tensor): Tensor = {
+  override def forward(embeddings: Tensor, itemEmbeddings: Tensor, targets: Tensor): Tensor = {
     val logits = torch.matmul(embeddings, itemEmbeddings.t()).div(new Scalar(temperature))
     val logProbs = torch.log_softmax(logits, -1)
     val batchSize = targets.size(0).toInt

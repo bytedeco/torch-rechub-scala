@@ -30,7 +30,7 @@ object ModelSmokeTests {
       .toType(ScalarType.Long)
 
     // Model factories wrapped to avoid crashing the whole test on heavy initializations.
-    val factories: Seq[() => org.bytedeco.pytorch.Module] = Seq(
+    val factories: Seq[() => org.bytedeco.pytorch.nn.Module] = Seq(
       () => new AKT(numConcepts, embedDim = embed),
       () => new IEKT(numConcepts, embedDim = embed),
       () => new MTKT(numConcepts, embedDim = embed),
